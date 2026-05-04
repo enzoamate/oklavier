@@ -1,0 +1,4 @@
+# Default owner for everything in the repo.
+# Auto-requested on every PR, required reviewer when branch protection
+# enables "require code owner reviews".
+* @enzoamate
