@@ -1,0 +1,89 @@
+name: Build & push images
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: What to build
+        type: choice
+        required: true
+        default: all
+        options: [all, core, core-api, core-frontend, agent]
+      version:
+        description: Version tag (e.g. v1.0.3)
+        type: string
+        required: true
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+
+  core-api:
+    if: ${{ inputs.target == 'all' || inputs.target == 'core' || inputs.target == 'core-api' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: oklavier-core/backend
+          file: oklavier-core/backend/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/oklavier-api:${{ inputs.version }}
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/oklavier-api:latest
+
+  core-frontend:
+    if: ${{ inputs.target == 'all' || inputs.target == 'core' || inputs.target == 'core-frontend' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: oklavier-core/frontend
+          file: oklavier-core/frontend/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/oklavier-frontend:${{ inputs.version }}
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/oklavier-frontend:latest
+
+  agent:
+    if: ${{ inputs.target == 'all' || inputs.target == 'agent' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: oklavier-agent/backend
+          file: oklavier-agent/backend/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/oklavier-agent:${{ inputs.version }}
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/oklavier-agent:latest

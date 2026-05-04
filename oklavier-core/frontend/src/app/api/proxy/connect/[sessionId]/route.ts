@@ -1,0 +1,9 @@
+import { NextRequest } from "next/server";
+import { requireAuth, apiPost, NextResponse } from "@/lib/api-proxy";
+
+export async function POST(request: NextRequest, { params }: { params: Promise<{ sessionId: string }> }) {
+  if (!await requireAuth()) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+  const { sessionId } = await params;
+  const res = await apiPost(`/api/proxy/connect/${sessionId}`, {});
+  return NextResponse.json(await res.json(), { status: res.status });
+}

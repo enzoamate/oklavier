@@ -1,0 +1,87 @@
+# Oklavier Control Plane Helm Values
+
+global:
+  namespace: oklavier
+
+# Frontend (Next.js) - pure UI + proxy, no DB access
+front:
+  image:
+    repository: ghcr.io/enzoamate/oklavier-frontend
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  env:
+    OKLAVIER_API: "http://oklavier-api:8080"
+
+# API (Go Fiber) - handles auth, sessions, workspaces, everything
+api:
+  image:
+    repository: ghcr.io/enzoamate/oklavier-api
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+
+# Database credentials (shared between CNPG + API)
+database:
+  enabled: true
+  instances: 2
+  size: 10Gi
+  storageClass: ""
+  name: "oklavier"
+  user: "oklavier"
+  password: "REPLACE_ME"
+
+# Initial admin account (created on first boot)
+admin:
+  name: "Admin"
+  email: "admin@oklavier.local"
+  password: "REPLACE_ME"
+
+# JWT secret for API tokens
+jwtSecret: ""
+
+# Internal secret for Next.js <-> Go API communication
+internalSecret: ""
+
+# Ingress
+ingress:
+  enabled: false
+  host: oklavier.example.com
+  tls: false
+  annotations: {}
+
+# Valkey (Redis-compatible) for rate limiting and session cache
+valkey:
+  enabled: true
+  image:
+    repository: valkey/valkey
+    tag: "8-alpine"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+# Image pull secret
+imagePullSecret:
+  enabled: false
+  name: oklavier-registry
+  registry: ""
+  username: ""
+  password: ""
