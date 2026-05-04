@@ -5,6 +5,7 @@
 [![CI](https://github.com/enzoamate/oklavier/actions/workflows/ci.yml/badge.svg)](https://github.com/enzoamate/oklavier/actions/workflows/ci.yml)
 [![Release](https://github.com/enzoamate/oklavier/actions/workflows/release.yml/badge.svg)](https://github.com/enzoamate/oklavier/actions/workflows/release.yml)
 [![codecov](https://codecov.io/gh/enzoamate/oklavier/branch/main/graph/badge.svg)](https://codecov.io/gh/enzoamate/oklavier)
+[![CodeQL](https://github.com/enzoamate/oklavier/actions/workflows/codeql.yml/badge.svg)](https://github.com/enzoamate/oklavier/actions/workflows/codeql.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![GHCR](https://img.shields.io/badge/ghcr-oklavier-blue?logo=docker)](https://github.com/enzoamate?tab=packages&repo_name=oklavier)
 [![Trivy scanned](https://img.shields.io/badge/trivy-scanned-success?logo=aqua)](https://github.com/enzoamate/oklavier/security/code-scanning)
