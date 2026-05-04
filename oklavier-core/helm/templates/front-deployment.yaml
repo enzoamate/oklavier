@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oklavier-front
+  namespace: {{ include "oklavier.namespace" . }}
+  labels:
+    app: oklavier-front
+    {{- include "oklavier.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.front.replicas }}
+  selector:
+    matchLabels:
+      app: oklavier-front
+  template:
+    metadata:
+      labels:
+        app: oklavier-front
+    spec:
+      {{- if .Values.imagePullSecret.enabled }}
+      imagePullSecrets:
+        - name: {{ .Values.imagePullSecret.name }}
+      {{- end }}
+      containers:
+        - name: oklavier-front
+          image: "{{ .Values.front.image.repository }}:{{ .Values.front.image.tag }}"
+          imagePullPolicy: {{ .Values.front.image.pullPolicy }}
+          ports:
+            - containerPort: 3000
+              protocol: TCP
+          env:
+            - name: OKLAVIER_API
+              value: {{ .Values.front.env.OKLAVIER_API | quote }}
+            - name: OKLAVIER_INTERNAL_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: oklavier-secrets
+                  key: internal-secret
+          resources:
+            {{- toYaml .Values.front.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oklavier-front
+  namespace: {{ include "oklavier.namespace" . }}
+spec:
+  selector:
+    app: oklavier-front
+  ports:
+    - port: 80
+      targetPort: 3000

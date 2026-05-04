@@ -1,0 +1,20 @@
+{{- if .Values.database.enabled }}
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: oklavier-db
+  namespace: {{ include "oklavier.namespace" . }}
+spec:
+  instances: {{ .Values.database.instances }}
+  storage:
+    size: {{ .Values.database.size }}
+    {{- if .Values.database.storageClass }}
+    storageClassName: {{ .Values.database.storageClass }}
+    {{- end }}
+  bootstrap:
+    initdb:
+      database: {{ .Values.database.name }}
+      owner: {{ .Values.database.user }}
+      secret:
+        name: oklavier-db-credentials
+{{- end }}

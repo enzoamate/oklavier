@@ -1,0 +1,44 @@
+# Binaries
+*.exe
+*.dll
+*.so
+*.dylib
+oklavier-api
+oklavier-api-linux
+oklavier-agent
+oklavier-agent-linux
+
+# Go
+*.test
+*.out
+vendor/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+.npm
+.yarn
+.pnpm-store/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+kubeconfig
+*.kubeconfig
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+dist/
+build/
+*.log
+coverage/
