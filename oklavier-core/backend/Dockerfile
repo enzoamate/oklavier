@@ -6,7 +6,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -ldflags="-s -w" -o /out/oklavier-api ./cmd/server
 
-FROM alpine:3.20
+FROM alpine:3.23
 RUN apk add --no-cache ca-certificates curl bash && \
     curl -fsSL -o /tmp/helm.tar.gz https://get.helm.sh/helm-v3.16.1-linux-amd64.tar.gz && \
     tar -xzf /tmp/helm.tar.gz -C /tmp && \
