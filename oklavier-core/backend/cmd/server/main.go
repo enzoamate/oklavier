@@ -3,9 +3,9 @@ package main
 import (
 	"bytes"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/csv"
 	"encoding/hex"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -573,13 +573,13 @@ func main() {
 	api.Get("/guest/:token", func(c *fiber.Ctx) error {
 		token := c.Params("token")
 		type GuestLinkInfo struct {
-			ID            string    `db:"id"`
-			WorkspaceID   string    `db:"workspace_id"`
-			Label         string    `db:"label"`
-			PasswordHash  string    `db:"password_hash"`
-			MaxUses       int       `db:"max_uses"`
-			UsedCount     int       `db:"used_count"`
-			ExpiresAt     time.Time `db:"expires_at"`
+			ID           string    `db:"id"`
+			WorkspaceID  string    `db:"workspace_id"`
+			Label        string    `db:"label"`
+			PasswordHash string    `db:"password_hash"`
+			MaxUses      int       `db:"max_uses"`
+			UsedCount    int       `db:"used_count"`
+			ExpiresAt    time.Time `db:"expires_at"`
 		}
 		var link GuestLinkInfo
 		err := database.Get(&link, `SELECT id, workspace_id, COALESCE(label,'') as label, COALESCE(password_hash,'') as password_hash, COALESCE(max_uses,1) as max_uses, COALESCE(used_count,0) as used_count, expires_at FROM guest_link WHERE token = $1`, token)
@@ -600,14 +600,19 @@ func main() {
 		}
 
 		return c.JSON(fiber.Map{
-			"workspace_id":          workspace.ID,
-			"workspace_name":        workspace.FriendlyName,
-			"workspace_description": func() string { if workspace.Description != nil { return *workspace.Description }; return "" }(),
-			"workspace_image":       workspace.ImageSrc,
-			"workspace_type":        workspace.WorkspaceType,
-			"requires_password":     link.PasswordHash != "",
-			"requires_credentials":  workspace.ServerAuthMode == "prompt",
-			"label":                 link.Label,
+			"workspace_id":   workspace.ID,
+			"workspace_name": workspace.FriendlyName,
+			"workspace_description": func() string {
+				if workspace.Description != nil {
+					return *workspace.Description
+				}
+				return ""
+			}(),
+			"workspace_image":      workspace.ImageSrc,
+			"workspace_type":       workspace.WorkspaceType,
+			"requires_password":    link.PasswordHash != "",
+			"requires_credentials": workspace.ServerAuthMode == "prompt",
+			"label":                link.Label,
 		})
 	})
 
@@ -626,13 +631,13 @@ func main() {
 		c.BodyParser(&req)
 
 		type GuestLink struct {
-			ID            string    `db:"id"`
-			WorkspaceID   string    `db:"workspace_id"`
-			PasswordHash  string    `db:"password_hash"`
-			MaxUses       int       `db:"max_uses"`
-			UsedCount     int       `db:"used_count"`
-			ExpiresAt     time.Time `db:"expires_at"`
-			CreatedBy     string    `db:"created_by"`
+			ID           string    `db:"id"`
+			WorkspaceID  string    `db:"workspace_id"`
+			PasswordHash string    `db:"password_hash"`
+			MaxUses      int       `db:"max_uses"`
+			UsedCount    int       `db:"used_count"`
+			ExpiresAt    time.Time `db:"expires_at"`
+			CreatedBy    string    `db:"created_by"`
 		}
 		var link GuestLink
 		err := database.Get(&link, `SELECT id, workspace_id, COALESCE(password_hash,'') as password_hash, COALESCE(max_uses,1) as max_uses, COALESCE(used_count,0) as used_count, expires_at, COALESCE(created_by,'') as created_by FROM guest_link WHERE token = $1`, token)
@@ -676,7 +681,9 @@ func main() {
 		sessionID := generateID()
 		guestUserID := "guest:" + link.ID
 		lang := req.Lang
-		if lang == "" { lang = "en" }
+		if lang == "" {
+			lang = "en"
+		}
 
 		if workspace.WorkspaceType == "server" {
 			srvUser := workspace.ServerUsername
@@ -685,7 +692,9 @@ func main() {
 			if workspace.ServerAuthMode == "prompt" {
 				srvUser = req.ServerUsername
 				srvPass = req.ServerPassword
-				if req.ServerDomain != "" { srvDomain = req.ServerDomain }
+				if req.ServerDomain != "" {
+					srvDomain = req.ServerDomain
+				}
 			}
 			agentBody := map[string]interface{}{
 				"session_id": sessionID, "user_id": guestUserID, "lang": lang,
@@ -693,7 +702,7 @@ func main() {
 				"username": srvUser, "password": srvPass, "domain": srvDomain,
 				"ignore_cert": workspace.ServerIgnoreCert, "security": workspace.ServerSecurity,
 				"default_settings": workspace.ServerDefaultSettings,
-				"width": workspace.XRes, "height": workspace.YRes,
+				"width":            workspace.XRes, "height": workspace.YRes,
 				"record_sessions": workspace.RecordSessions, "workspace_name": workspace.FriendlyName,
 			}
 			if workspace.RecordSessions {
@@ -708,7 +717,9 @@ func main() {
 				return c.Status(500).JSON(fiber.Map{"error": "Failed to connect to agent"})
 			}
 			expiration := time.Now().Add(1 * time.Hour)
-			if workspace.SessionTimeLimit > 0 { expiration = time.Now().Add(time.Duration(workspace.SessionTimeLimit) * time.Second) }
+			if workspace.SessionTimeLimit > 0 {
+				expiration = time.Now().Add(time.Duration(workspace.SessionTimeLimit) * time.Second)
+			}
 			database.Exec(`INSERT INTO workspace_session (id, user_id, workspace_id, container_ip, status, agent_id, expires_at, session_type) VALUES ($1,$2,$3,$4,'running',$5,$6,'server')`,
 				sessionID, guestUserID, workspace.ID, workspace.ServerHostname, agentID, expiration)
 		} else {
@@ -724,7 +735,10 @@ func main() {
 			if err != nil {
 				return c.Status(500).JSON(fiber.Map{"error": "Failed to connect to agent"})
 			}
-			var podResp struct { PodName string `json:"pod_name"`; PodIP string `json:"pod_ip"` }
+			var podResp struct {
+				PodName string `json:"pod_name"`
+				PodIP   string `json:"pod_ip"`
+			}
 			json.Unmarshal(agentResp, &podResp)
 
 			guacBody := map[string]interface{}{
@@ -748,7 +762,9 @@ func main() {
 				return c.Status(500).JSON(fiber.Map{"error": "Failed to register session"})
 			}
 			expiration := time.Now().Add(1 * time.Hour)
-			if workspace.SessionTimeLimit > 0 { expiration = time.Now().Add(time.Duration(workspace.SessionTimeLimit) * time.Second) }
+			if workspace.SessionTimeLimit > 0 {
+				expiration = time.Now().Add(time.Duration(workspace.SessionTimeLimit) * time.Second)
+			}
 			database.Exec(`INSERT INTO workspace_session (id, user_id, workspace_id, pod_name, container_ip, status, agent_id, expires_at, session_type) VALUES ($1,$2,$3,$4,$5,'running',$6,$7,'container')`,
 				sessionID, guestUserID, workspace.ID, podResp.PodName, podResp.PodIP, agentID, expiration)
 		}
@@ -920,8 +936,12 @@ func main() {
 			Search  string `json:"search"`
 		}
 		c.BodyParser(&req)
-		if req.PerPage == 0 { req.PerPage = 1000 }
-		if req.Page == 0 { req.Page = 1 }
+		if req.PerPage == 0 {
+			req.PerPage = 1000
+		}
+		if req.Page == 0 {
+			req.Page = 1
+		}
 		offset := (req.Page - 1) * req.PerPage
 
 		var total int
@@ -932,13 +952,13 @@ func main() {
 		}
 
 		type UserRow struct {
-			ID           string  `db:"id" json:"id"`
-			Name         string  `db:"name" json:"name"`
-			Email        string  `db:"email" json:"email"`
-			Role         string  `db:"role" json:"role"`
-			Banned       bool    `db:"banned" json:"banned"`
-			AuthProvider string  `db:"auth_provider" json:"auth_provider"`
-			CreatedAt    string  `db:"createdAt" json:"createdAt"`
+			ID           string `db:"id" json:"id"`
+			Name         string `db:"name" json:"name"`
+			Email        string `db:"email" json:"email"`
+			Role         string `db:"role" json:"role"`
+			Banned       bool   `db:"banned" json:"banned"`
+			AuthProvider string `db:"auth_provider" json:"auth_provider"`
+			CreatedAt    string `db:"createdAt" json:"createdAt"`
 		}
 		var users []UserRow
 		query := `SELECT id, name, email, COALESCE(role,'user') as role, COALESCE(banned,false) as banned, COALESCE(auth_provider,'credential') as auth_provider, "createdAt" FROM "user"`
@@ -949,12 +969,16 @@ func main() {
 			query += ` ORDER BY "createdAt" DESC LIMIT ` + fmt.Sprintf("%d OFFSET %d", req.PerPage, offset)
 			database.Select(&users, query)
 		}
-		if users == nil { users = []UserRow{} }
+		if users == nil {
+			users = []UserRow{}
+		}
 
 		return c.JSON(fiber.Map{"users": users, "total": total, "page": req.Page, "per_page": req.PerPage})
 	})
 	admin.Post("/users/delete", func(c *fiber.Ctx) error {
-		var req struct { ID string `json:"id"` }
+		var req struct {
+			ID string `json:"id"`
+		}
 		c.BodyParser(&req)
 		database.Exec(`DELETE FROM refresh_token WHERE user_id = $1`, req.ID)
 		database.Exec(`DELETE FROM "account" WHERE "userId" = $1`, req.ID)
@@ -1020,8 +1044,12 @@ func main() {
 		}
 		adminID, _ := c.Locals("user_id").(string)
 		detail := fmt.Sprintf("updated %d users", updated)
-		if req.Role != "" { detail += fmt.Sprintf(" role=%s", req.Role) }
-		if req.Banned != nil { detail += fmt.Sprintf(" banned=%v", *req.Banned) }
+		if req.Role != "" {
+			detail += fmt.Sprintf(" role=%s", req.Role)
+		}
+		if req.Banned != nil {
+			detail += fmt.Sprintf(" banned=%v", *req.Banned)
+		}
 		database.LogAudit(adminID, c.Locals("user_email").(string), "bulk_update", "user", "", detail, c.IP())
 		return c.JSON(fiber.Map{"ok": true, "updated": updated})
 	})
@@ -1119,7 +1147,9 @@ func main() {
 		return c.JSON(fiber.Map{"items": items, "categories": cats})
 	})
 	admin.Post("/registry/install", func(c *fiber.Ctx) error {
-		var req struct{ RegistryID string `json:"registry_id"` }
+		var req struct {
+			RegistryID string `json:"registry_id"`
+		}
 		c.BodyParser(&req)
 		err := database.InstallFromRegistry(req.RegistryID)
 		if err != nil {
@@ -1128,7 +1158,9 @@ func main() {
 		return c.JSON(fiber.Map{"ok": true})
 	})
 	admin.Post("/registry/uninstall", func(c *fiber.Ctx) error {
-		var req struct{ RegistryID string `json:"registry_id"` }
+		var req struct {
+			RegistryID string `json:"registry_id"`
+		}
 		c.BodyParser(&req)
 		database.UninstallFromRegistry(req.RegistryID)
 		return c.JSON(fiber.Map{"ok": true})
@@ -1332,8 +1364,12 @@ func main() {
 			PerPage int `json:"per_page"`
 		}
 		c.BodyParser(&req)
-		if req.PerPage == 0 { req.PerPage = 50 }
-		if req.Page == 0 { req.Page = 1 }
+		if req.PerPage == 0 {
+			req.PerPage = 50
+		}
+		if req.Page == 0 {
+			req.Page = 1
+		}
 		offset := (req.Page - 1) * req.PerPage
 
 		var total int
@@ -1357,7 +1393,9 @@ func main() {
 		database.Select(&links, `SELECT gl.id, gl.workspace_id, COALESCE(w.friendly_name,'') as workspace_name, gl.token, COALESCE(gl.created_by,'') as created_by, COALESCE(gl.label,'') as label, COALESCE(gl.password_hash,'') as password_hash, COALESCE(gl.max_uses,1) as max_uses, COALESCE(gl.used_count,0) as used_count, gl.expires_at, gl.created_at
 			FROM guest_link gl LEFT JOIN workspace w ON w.id = gl.workspace_id
 			ORDER BY gl.created_at DESC LIMIT $1 OFFSET $2`, req.PerPage, offset)
-		if links == nil { links = []GuestLinkRow{} }
+		if links == nil {
+			links = []GuestLinkRow{}
+		}
 		for i := range links {
 			links[i].HasPassword = links[i].PasswordHash != ""
 		}
@@ -1376,12 +1414,18 @@ func main() {
 		}
 		var dur time.Duration
 		switch req.Duration {
-		case "1h": dur = 1 * time.Hour
-		case "8h": dur = 8 * time.Hour
-		case "24h": dur = 24 * time.Hour
-		case "7d": dur = 7 * 24 * time.Hour
-		case "30d": dur = 30 * 24 * time.Hour
-		default: dur = 24 * time.Hour
+		case "1h":
+			dur = 1 * time.Hour
+		case "8h":
+			dur = 8 * time.Hour
+		case "24h":
+			dur = 24 * time.Hour
+		case "7d":
+			dur = 7 * 24 * time.Hour
+		case "30d":
+			dur = 30 * 24 * time.Hour
+		default:
+			dur = 24 * time.Hour
 		}
 		expiresAt := time.Now().Add(dur)
 		var passwordHash string
@@ -1392,7 +1436,9 @@ func main() {
 			}
 			passwordHash = string(hash)
 		}
-		if req.MaxUses == 0 { req.MaxUses = 1 }
+		if req.MaxUses == 0 {
+			req.MaxUses = 1
+		}
 		userID, _ := c.Locals("user_id").(string)
 		var token string
 		err := database.QueryRow(`INSERT INTO guest_link (workspace_id, created_by, label, password_hash, max_uses, expires_at) VALUES ($1, $2, $3, $4, $5, $6) RETURNING token`,
@@ -1405,7 +1451,9 @@ func main() {
 		return c.JSON(fiber.Map{"ok": true, "token": token})
 	})
 	admin.Post("/guest-links/delete", func(c *fiber.Ctx) error {
-		var req struct { ID string `json:"id"` }
+		var req struct {
+			ID string `json:"id"`
+		}
 		c.BodyParser(&req)
 		database.Exec(`DELETE FROM guest_link WHERE id = $1`, req.ID)
 		database.LogAudit(c.Locals("user_id").(string), "", "delete", "guest_link", req.ID, "", c.IP())
@@ -1422,7 +1470,11 @@ func main() {
 		maskedSettings := make(map[string]string)
 		for k, v := range settings {
 			if strings.Contains(k, "secret") || strings.Contains(k, "password") {
-				if v != "" { maskedSettings[k] = "••••••" } else { maskedSettings[k] = "" }
+				if v != "" {
+					maskedSettings[k] = "••••••"
+				} else {
+					maskedSettings[k] = ""
+				}
 			} else {
 				maskedSettings[k] = v
 			}
@@ -1436,7 +1488,9 @@ func main() {
 		}
 		var authMethods []AuthMethod
 		database.Select(&authMethods, `SELECT id, name, type, enabled, config FROM auth_method ORDER BY name`)
-		if authMethods == nil { authMethods = []AuthMethod{} }
+		if authMethods == nil {
+			authMethods = []AuthMethod{}
+		}
 		type GuestLinkExport struct {
 			WorkspaceName string `db:"workspace_name" json:"workspace_name"`
 			Label         string `db:"label" json:"label"`
@@ -1446,7 +1500,9 @@ func main() {
 		}
 		var guestLinks []GuestLinkExport
 		database.Select(&guestLinks, `SELECT COALESCE(w.friendly_name,'') as workspace_name, COALESCE(gl.label,'') as label, COALESCE(gl.max_uses,1) as max_uses, COALESCE(gl.used_count,0) as used_count, gl.expires_at FROM guest_link gl LEFT JOIN workspace w ON w.id = gl.workspace_id ORDER BY gl.created_at DESC`)
-		if guestLinks == nil { guestLinks = []GuestLinkExport{} }
+		if guestLinks == nil {
+			guestLinks = []GuestLinkExport{}
+		}
 		type WGAssoc struct {
 			WorkspaceName string   `json:"workspace_name"`
 			GroupNames    []string `json:"group_names"`
@@ -1455,29 +1511,55 @@ func main() {
 		for _, w := range workspaces {
 			wGroups, _ := database.GetWorkspaceGroups(w.ID)
 			names := make([]string, len(wGroups))
-			for i, g := range wGroups { names[i] = g.Name }
+			for i, g := range wGroups {
+				names[i] = g.Name
+			}
 			if len(names) > 0 {
 				wgAssocs = append(wgAssocs, WGAssoc{WorkspaceName: w.FriendlyName, GroupNames: names})
 			}
 		}
-		if wgAssocs == nil { wgAssocs = []WGAssoc{} }
+		if wgAssocs == nil {
+			wgAssocs = []WGAssoc{}
+		}
 		type ExportWorkspace struct {
-			Name string `json:"name"`; FriendlyName string `json:"friendly_name"`; Description string `json:"description"`
-			ImageSrc string `json:"image_src"`; DockerImage string `json:"docker_image"`; Cores float64 `json:"cores"`; Memory int64 `json:"memory"`
-			SHMSize string `json:"shm_size"`; Enabled bool `json:"enabled"`; Category string `json:"category"`
-			DockerRegistry string `json:"docker_registry"`; DockerUser string `json:"docker_user"`
-			SessionTimeLimit int `json:"session_time_limit"`; GPUCount int `json:"gpu_count"`; RestrictToRegion string `json:"restrict_to_region"`
-			RunConfig string `json:"run_config"`; ExecConfig string `json:"exec_config"`; VolumeMappings string `json:"volume_mappings"`
-			Persistent bool `json:"persistent"`; PersistentSize string `json:"persistent_size"`
-			WorkspaceType string `json:"workspace_type"`; ServerHostname string `json:"server_hostname"`; ServerPort int `json:"server_port"`
-			ServerProtocol string `json:"server_protocol"`; ServerDomain string `json:"server_domain"`
-			ServerIgnoreCert bool `json:"server_ignore_cert"`; ServerSecurity string `json:"server_security"`
-			ServerAuthMode string `json:"server_auth_mode"`; ServerAllowRemember bool `json:"server_allow_remember"`
-			ServerDefaultSettings string `json:"server_default_settings"`; RecordSessions bool `json:"record_sessions"`
+			Name                  string  `json:"name"`
+			FriendlyName          string  `json:"friendly_name"`
+			Description           string  `json:"description"`
+			ImageSrc              string  `json:"image_src"`
+			DockerImage           string  `json:"docker_image"`
+			Cores                 float64 `json:"cores"`
+			Memory                int64   `json:"memory"`
+			SHMSize               string  `json:"shm_size"`
+			Enabled               bool    `json:"enabled"`
+			Category              string  `json:"category"`
+			DockerRegistry        string  `json:"docker_registry"`
+			DockerUser            string  `json:"docker_user"`
+			SessionTimeLimit      int     `json:"session_time_limit"`
+			GPUCount              int     `json:"gpu_count"`
+			RestrictToRegion      string  `json:"restrict_to_region"`
+			RunConfig             string  `json:"run_config"`
+			ExecConfig            string  `json:"exec_config"`
+			VolumeMappings        string  `json:"volume_mappings"`
+			Persistent            bool    `json:"persistent"`
+			PersistentSize        string  `json:"persistent_size"`
+			WorkspaceType         string  `json:"workspace_type"`
+			ServerHostname        string  `json:"server_hostname"`
+			ServerPort            int     `json:"server_port"`
+			ServerProtocol        string  `json:"server_protocol"`
+			ServerDomain          string  `json:"server_domain"`
+			ServerIgnoreCert      bool    `json:"server_ignore_cert"`
+			ServerSecurity        string  `json:"server_security"`
+			ServerAuthMode        string  `json:"server_auth_mode"`
+			ServerAllowRemember   bool    `json:"server_allow_remember"`
+			ServerDefaultSettings string  `json:"server_default_settings"`
+			RecordSessions        bool    `json:"record_sessions"`
 		}
 		exportWorkspaces := make([]ExportWorkspace, len(workspaces))
 		for i, w := range workspaces {
-			desc := ""; if w.Description != nil { desc = *w.Description }
+			desc := ""
+			if w.Description != nil {
+				desc = *w.Description
+			}
 			exportWorkspaces[i] = ExportWorkspace{
 				Name: w.Name, FriendlyName: w.FriendlyName, Description: desc, ImageSrc: w.ImageSrc, DockerImage: w.DockerImage,
 				Cores: w.Cores, Memory: w.Memory, SHMSize: w.SHMSize, Enabled: w.Enabled, Category: w.Category,
@@ -1509,30 +1591,67 @@ func main() {
 		// Import workspaces
 		if raw, ok := body["workspaces"]; ok {
 			var workspaces []struct {
-				Name string `json:"name"`; FriendlyName string `json:"friendly_name"`; Description string `json:"description"`
-				ImageSrc string `json:"image_src"`; DockerImage string `json:"docker_image"`; Cores float64 `json:"cores"`; Memory int64 `json:"memory"`
-				SHMSize string `json:"shm_size"`; Enabled bool `json:"enabled"`; Category string `json:"category"`
-				DockerRegistry string `json:"docker_registry"`; DockerUser string `json:"docker_user"`
-				SessionTimeLimit int `json:"session_time_limit"`; GPUCount int `json:"gpu_count"`; RestrictToRegion string `json:"restrict_to_region"`
-				RunConfig string `json:"run_config"`; ExecConfig string `json:"exec_config"`; VolumeMappings string `json:"volume_mappings"`
-				Persistent bool `json:"persistent"`; PersistentSize string `json:"persistent_size"`
-				WorkspaceType string `json:"workspace_type"`; ServerHostname string `json:"server_hostname"`; ServerPort int `json:"server_port"`
-				ServerProtocol string `json:"server_protocol"`; ServerDomain string `json:"server_domain"`
-				ServerIgnoreCert bool `json:"server_ignore_cert"`; ServerSecurity string `json:"server_security"`
-				ServerAuthMode string `json:"server_auth_mode"`; ServerAllowRemember bool `json:"server_allow_remember"`
-				ServerDefaultSettings string `json:"server_default_settings"`; RecordSessions bool `json:"record_sessions"`
+				Name                  string  `json:"name"`
+				FriendlyName          string  `json:"friendly_name"`
+				Description           string  `json:"description"`
+				ImageSrc              string  `json:"image_src"`
+				DockerImage           string  `json:"docker_image"`
+				Cores                 float64 `json:"cores"`
+				Memory                int64   `json:"memory"`
+				SHMSize               string  `json:"shm_size"`
+				Enabled               bool    `json:"enabled"`
+				Category              string  `json:"category"`
+				DockerRegistry        string  `json:"docker_registry"`
+				DockerUser            string  `json:"docker_user"`
+				SessionTimeLimit      int     `json:"session_time_limit"`
+				GPUCount              int     `json:"gpu_count"`
+				RestrictToRegion      string  `json:"restrict_to_region"`
+				RunConfig             string  `json:"run_config"`
+				ExecConfig            string  `json:"exec_config"`
+				VolumeMappings        string  `json:"volume_mappings"`
+				Persistent            bool    `json:"persistent"`
+				PersistentSize        string  `json:"persistent_size"`
+				WorkspaceType         string  `json:"workspace_type"`
+				ServerHostname        string  `json:"server_hostname"`
+				ServerPort            int     `json:"server_port"`
+				ServerProtocol        string  `json:"server_protocol"`
+				ServerDomain          string  `json:"server_domain"`
+				ServerIgnoreCert      bool    `json:"server_ignore_cert"`
+				ServerSecurity        string  `json:"server_security"`
+				ServerAuthMode        string  `json:"server_auth_mode"`
+				ServerAllowRemember   bool    `json:"server_allow_remember"`
+				ServerDefaultSettings string  `json:"server_default_settings"`
+				RecordSessions        bool    `json:"record_sessions"`
 			}
 			json.Unmarshal(raw, &workspaces)
 			created, updated := 0, 0
 			for _, w := range workspaces {
 				var existingID string
 				database.Get(&existingID, `SELECT id FROM workspace WHERE name = $1`, w.Name)
-				wType := w.WorkspaceType; if wType == "" { wType = "container" }
-				rc := w.RunConfig; if rc == "" { rc = "{}" }
-				ec := w.ExecConfig; if ec == "" { ec = "{}" }
-				vm := w.VolumeMappings; if vm == "" { vm = "{}" }
-				sh := w.SHMSize; if sh == "" { sh = "512m" }
-				sds := w.ServerDefaultSettings; if sds == "" { sds = "{}" }
+				wType := w.WorkspaceType
+				if wType == "" {
+					wType = "container"
+				}
+				rc := w.RunConfig
+				if rc == "" {
+					rc = "{}"
+				}
+				ec := w.ExecConfig
+				if ec == "" {
+					ec = "{}"
+				}
+				vm := w.VolumeMappings
+				if vm == "" {
+					vm = "{}"
+				}
+				sh := w.SHMSize
+				if sh == "" {
+					sh = "512m"
+				}
+				sds := w.ServerDefaultSettings
+				if sds == "" {
+					sds = "{}"
+				}
 				if existingID != "" {
 					database.Exec(`UPDATE workspace SET friendly_name=$2, description=$3, image_src=$4, docker_image=$5, cores=$6, memory=$7, category=$8, docker_registry=$9, docker_user=$10, session_time_limit=$11, gpu_count=$12, restrict_to_region=$13, run_config=$14, exec_config=$15, volume_mappings=$16, persistent=$17, persistent_size=$18, workspace_type=$19, server_hostname=$20, server_port=$21, server_protocol=$22, server_domain=$23, server_ignore_cert=$24, server_security=$25, server_auth_mode=$26, server_allow_remember=$27, server_default_settings=$28, record_sessions=$29, shm_size=$30, enabled=$31, updated_at=NOW() WHERE id=$1`,
 						existingID, w.FriendlyName, w.Description, w.ImageSrc, w.DockerImage, w.Cores, w.Memory, w.Category, w.DockerRegistry, w.DockerUser, w.SessionTimeLimit, w.GPUCount, w.RestrictToRegion, rc, ec, vm, w.Persistent, w.PersistentSize, wType, w.ServerHostname, w.ServerPort, w.ServerProtocol, w.ServerDomain, w.ServerIgnoreCert, w.ServerSecurity, w.ServerAuthMode, w.ServerAllowRemember, sds, w.RecordSessions, sh, w.Enabled)
@@ -1548,15 +1667,22 @@ func main() {
 		// Import groups
 		if raw, ok := body["groups"]; ok {
 			var groups []struct {
-				Name string `json:"name"`; Description string `json:"description"`; Color string `json:"color"`
-				MaxSessions int `json:"max_sessions"`; MaxCPU float64 `json:"max_cpu"`; MaxMemory int64 `json:"max_memory"`
+				Name        string  `json:"name"`
+				Description string  `json:"description"`
+				Color       string  `json:"color"`
+				MaxSessions int     `json:"max_sessions"`
+				MaxCPU      float64 `json:"max_cpu"`
+				MaxMemory   int64   `json:"max_memory"`
 			}
 			json.Unmarshal(raw, &groups)
 			created, updated := 0, 0
 			for _, g := range groups {
 				var existingID string
 				database.Get(&existingID, `SELECT id FROM oklavier_group WHERE name = $1`, g.Name)
-				color := g.Color; if color == "" { color = "#6366f1" }
+				color := g.Color
+				if color == "" {
+					color = "#6366f1"
+				}
 				if existingID != "" {
 					database.Exec(`UPDATE oklavier_group SET description=$2, color=$3, max_sessions=$4, max_cpu=$5, max_memory=$6 WHERE id=$1`, existingID, g.Description, color, g.MaxSessions, g.MaxCPU, g.MaxMemory)
 					updated++
@@ -1584,7 +1710,9 @@ func main() {
 			json.Unmarshal(raw, &settings)
 			imported := 0
 			for k, v := range settings {
-				if v == "••••••" { continue }
+				if v == "••••••" {
+					continue
+				}
 				database.SetSetting(k, v)
 				imported++
 			}
@@ -1593,7 +1721,10 @@ func main() {
 		// Import auth methods
 		if raw, ok := body["auth_methods"]; ok {
 			var methods []struct {
-				Name string `json:"name"`; Type string `json:"type"`; Enabled bool `json:"enabled"`; Config json.RawMessage `json:"config"`
+				Name    string          `json:"name"`
+				Type    string          `json:"type"`
+				Enabled bool            `json:"enabled"`
+				Config  json.RawMessage `json:"config"`
 			}
 			json.Unmarshal(raw, &methods)
 			created, updated := 0, 0
@@ -1613,21 +1744,29 @@ func main() {
 		// Import workspace-group associations
 		if raw, ok := body["workspace_groups"]; ok {
 			var assocs []struct {
-				WorkspaceName string `json:"workspace_name"`; GroupNames []string `json:"group_names"`
+				WorkspaceName string   `json:"workspace_name"`
+				GroupNames    []string `json:"group_names"`
 			}
 			json.Unmarshal(raw, &assocs)
 			linked := 0
 			for _, a := range assocs {
 				var wID string
 				database.Get(&wID, `SELECT id FROM workspace WHERE friendly_name = $1`, a.WorkspaceName)
-				if wID == "" { continue }
+				if wID == "" {
+					continue
+				}
 				var groupIDs []string
 				for _, gn := range a.GroupNames {
 					var gID string
 					database.Get(&gID, `SELECT id FROM oklavier_group WHERE name = $1`, gn)
-					if gID != "" { groupIDs = append(groupIDs, gID) }
+					if gID != "" {
+						groupIDs = append(groupIDs, gID)
+					}
 				}
-				if len(groupIDs) > 0 { database.SetWorkspaceGroups(wID, groupIDs); linked++ }
+				if len(groupIDs) > 0 {
+					database.SetWorkspaceGroups(wID, groupIDs)
+					linked++
+				}
 			}
 			summary["workspace_groups"] = fiber.Map{"linked": linked}
 		}
@@ -1910,19 +2049,27 @@ func main() {
 		return c.JSON(fiber.Map{"ok": true})
 	})
 	admin.Post("/groups/delete", func(c *fiber.Ctx) error {
-		var req struct { ID string `json:"id"` }
+		var req struct {
+			ID string `json:"id"`
+		}
 		c.BodyParser(&req)
 		database.DeleteGroup(req.ID)
 		return c.JSON(fiber.Map{"ok": true})
 	})
 	admin.Post("/groups/set-workspace", func(c *fiber.Ctx) error {
-		var req struct { WorkspaceID string `json:"workspace_id"`; GroupIDs []string `json:"group_ids"` }
+		var req struct {
+			WorkspaceID string   `json:"workspace_id"`
+			GroupIDs    []string `json:"group_ids"`
+		}
 		c.BodyParser(&req)
 		database.SetWorkspaceGroups(req.WorkspaceID, req.GroupIDs)
 		return c.JSON(fiber.Map{"ok": true})
 	})
 	admin.Post("/groups/set-user", func(c *fiber.Ctx) error {
-		var req struct { UserID string `json:"user_id"`; GroupIDs []string `json:"group_ids"` }
+		var req struct {
+			UserID   string   `json:"user_id"`
+			GroupIDs []string `json:"group_ids"`
+		}
 		c.BodyParser(&req)
 		database.SetUserGroups(req.UserID, req.GroupIDs)
 		return c.JSON(fiber.Map{"ok": true})
@@ -1935,13 +2082,18 @@ func main() {
 		return c.JSON(fiber.Map{"mappings": mappings, "groups": groups})
 	})
 	admin.Post("/oidc-mappings/create", func(c *fiber.Ctx) error {
-		var req struct { OIDCRole string `json:"oidc_role"`; GroupID string `json:"group_id"` }
+		var req struct {
+			OIDCRole string `json:"oidc_role"`
+			GroupID  string `json:"group_id"`
+		}
 		c.BodyParser(&req)
 		database.CreateOIDCMapping(req.OIDCRole, req.GroupID)
 		return c.JSON(fiber.Map{"ok": true})
 	})
 	admin.Post("/oidc-mappings/delete", func(c *fiber.Ctx) error {
-		var req struct { ID string `json:"id"` }
+		var req struct {
+			ID string `json:"id"`
+		}
 		c.BodyParser(&req)
 		database.DeleteOIDCMapping(req.ID)
 		return c.JSON(fiber.Map{"ok": true})

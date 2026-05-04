@@ -45,12 +45,12 @@ func (h *WorkspaceHandler) GetUserSessions(c *fiber.Ctx) error {
 		enriched = append(enriched, fiber.Map{
 			"session_id":         s.SessionID,
 			"operational_status": s.OperationalStatus,
-			"container_id":      s.ContainerID,
-			"container_ip":      s.ContainerIP,
-			"start_date":        s.StartDate,
-			"expiration_date":   s.ExpirationDate,
-			"keepalive_date":    s.KeepaliveDate,
-			"image":             img,
+			"container_id":       s.ContainerID,
+			"container_ip":       s.ContainerIP,
+			"start_date":         s.StartDate,
+			"expiration_date":    s.ExpirationDate,
+			"keepalive_date":     s.KeepaliveDate,
+			"image":              img,
 		})
 	}
 

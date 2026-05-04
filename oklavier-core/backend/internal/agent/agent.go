@@ -22,7 +22,7 @@ type Agent struct {
 }
 
 type SessionInfo struct {
-	SessionID      string `json:"session_id"`
+	SessionID   string `json:"session_id"`
 	PodName     string `json:"pod_name"`
 	ServiceName string `json:"service_name"`
 	PodIP       string `json:"pod_ip"`
@@ -69,8 +69,8 @@ func (a *Agent) CreateSession(imageID, imageName string, cores float64, memory i
 			Name:      podName,
 			Namespace: a.namespace,
 			Labels: map[string]string{
-				"app":           "oklavier-session",
-				"oklavier/id":   sessionID,
+				"app":            "oklavier-session",
+				"oklavier/id":    sessionID,
 				"oklavier/image": imageID,
 			},
 		},
@@ -171,7 +171,7 @@ func (a *Agent) CreateSession(imageID, imageName string, cores float64, memory i
 	}
 
 	return &SessionInfo{
-		SessionID:      sessionID,
+		SessionID:   sessionID,
 		PodName:     podName,
 		ServiceName: svcName,
 		PodIP:       podIP,
@@ -240,11 +240,11 @@ func (a *Agent) GetSessionStatus(sessionID string) (*SessionInfo, error) {
 	}
 
 	return &SessionInfo{
-		SessionID:  sessionID,
-		PodName: pod.Name,
-		PodIP:   pod.Status.PodIP,
-		Status:  status,
-		VNCPort: 6901,
+		SessionID: sessionID,
+		PodName:   pod.Name,
+		PodIP:     pod.Status.PodIP,
+		Status:    status,
+		VNCPort:   6901,
 	}, nil
 }
 
@@ -271,11 +271,11 @@ func (a *Agent) ListSessions() ([]SessionInfo, error) {
 			status = "failed"
 		}
 		sessions = append(sessions, SessionInfo{
-			SessionID:  sessionID,
-			PodName: pod.Name,
-			PodIP:   pod.Status.PodIP,
-			Status:  status,
-			VNCPort: 6901,
+			SessionID: sessionID,
+			PodName:   pod.Name,
+			PodIP:     pod.Status.PodIP,
+			Status:    status,
+			VNCPort:   6901,
 		})
 	}
 	return sessions, nil

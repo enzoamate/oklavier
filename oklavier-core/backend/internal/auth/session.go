@@ -244,4 +244,3 @@ func (rl *inMemoryRateLimiter) Remaining(ip string) int {
 	}
 	return remaining
 }
-

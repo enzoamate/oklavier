@@ -1,20 +1,20 @@
 package db
 
 type RegistryWorkspace struct {
-	ID            string   `db:"id" json:"id"`
-	Slug          string   `db:"slug" json:"slug"`
-	Name          string   `db:"name" json:"name"`
-	Description   *string  `db:"description" json:"description"`
-	IconURL       string   `db:"icon_url" json:"icon_url"`
-	DockerImage   string   `db:"docker_image" json:"docker_image"`
-	Version       string   `db:"version" json:"version"`
-	Category      string   `db:"category" json:"category"`
-	DefaultCores  float64  `db:"default_cores" json:"default_cores"`
-	DefaultMemory int64    `db:"default_memory" json:"default_memory"`
-	DefaultSHM    string   `db:"default_shm" json:"default_shm"`
-	Maintainer    *string  `db:"maintainer" json:"maintainer"`
-	IsOfficial    bool     `db:"is_official" json:"is_official"`
-	Installed     bool     `json:"installed"`
+	ID            string  `db:"id" json:"id"`
+	Slug          string  `db:"slug" json:"slug"`
+	Name          string  `db:"name" json:"name"`
+	Description   *string `db:"description" json:"description"`
+	IconURL       string  `db:"icon_url" json:"icon_url"`
+	DockerImage   string  `db:"docker_image" json:"docker_image"`
+	Version       string  `db:"version" json:"version"`
+	Category      string  `db:"category" json:"category"`
+	DefaultCores  float64 `db:"default_cores" json:"default_cores"`
+	DefaultMemory int64   `db:"default_memory" json:"default_memory"`
+	DefaultSHM    string  `db:"default_shm" json:"default_shm"`
+	Maintainer    *string `db:"maintainer" json:"maintainer"`
+	IsOfficial    bool    `db:"is_official" json:"is_official"`
+	Installed     bool    `json:"installed"`
 }
 
 func (db *DB) GetRegistry(category string) ([]RegistryWorkspace, error) {

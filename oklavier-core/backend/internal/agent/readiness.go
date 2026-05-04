@@ -12,12 +12,12 @@ import (
 )
 
 type SessionReadiness struct {
-	Phase      string `json:"phase"`       // creating, starting, vnc_waiting, ready, error
-	Progress   int    `json:"progress"`    // 0-100
-	Message    string `json:"message"`
-	PodIP      string `json:"pod_ip"`
-	PodReady   bool   `json:"pod_ready"`
-	VNCReady   bool   `json:"vnc_ready"`
+	Phase    string `json:"phase"`    // creating, starting, vnc_waiting, ready, error
+	Progress int    `json:"progress"` // 0-100
+	Message  string `json:"message"`
+	PodIP    string `json:"pod_ip"`
+	PodReady bool   `json:"pod_ready"`
+	VNCReady bool   `json:"vnc_ready"`
 }
 
 func (a *Agent) CheckReadiness(podName string, podIP string) *SessionReadiness {

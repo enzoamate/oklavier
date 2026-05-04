@@ -27,9 +27,9 @@ type Workspace struct {
 	DockerPassword string `db:"docker_password" json:"docker_password"`
 
 	// Session / resources
-	SessionTimeLimit  int   `db:"session_time_limit" json:"session_time_limit"`
-	GPUCount          int   `db:"gpu_count" json:"gpu_count"`
-	UncompressedSizeMB int  `db:"uncompressed_size_mb" json:"uncompressed_size_mb"`
+	SessionTimeLimit   int `db:"session_time_limit" json:"session_time_limit"`
+	GPUCount           int `db:"gpu_count" json:"gpu_count"`
+	UncompressedSizeMB int `db:"uncompressed_size_mb" json:"uncompressed_size_mb"`
 
 	// Restrictions
 	RestrictToAgent  string `db:"restrict_to_agent" json:"restrict_to_agent"`
@@ -47,17 +47,17 @@ type Workspace struct {
 	PersistentSize string         `db:"persistent_size" json:"persistent_size"`
 
 	// Server workspace
-	WorkspaceType    string `db:"workspace_type" json:"workspace_type"`       // "container" or "server"
-	ServerHostname   string `db:"server_hostname" json:"server_hostname"`
-	ServerPort       int    `db:"server_port" json:"server_port"`
-	ServerProtocol   string `db:"server_protocol" json:"server_protocol"`     // "rdp" or "vnc"
-	ServerUsername   string `db:"server_username" json:"server_username"`
-	ServerPassword   string `db:"server_password" json:"server_password"`
-	ServerDomain     string `db:"server_domain" json:"server_domain"`
-	ServerIgnoreCert bool   `db:"server_ignore_cert" json:"server_ignore_cert"`
-	ServerSecurity   string `db:"server_security" json:"server_security"`     // "any", "nla", "tls", "rdp"
-	ServerAuthMode       string `db:"server_auth_mode" json:"server_auth_mode"`             // "static" or "prompt"
-	ServerAllowRemember  bool   `db:"server_allow_remember" json:"server_allow_remember"`   // allow users to save credentials
+	WorkspaceType         string `db:"workspace_type" json:"workspace_type"` // "container" or "server"
+	ServerHostname        string `db:"server_hostname" json:"server_hostname"`
+	ServerPort            int    `db:"server_port" json:"server_port"`
+	ServerProtocol        string `db:"server_protocol" json:"server_protocol"` // "rdp" or "vnc"
+	ServerUsername        string `db:"server_username" json:"server_username"`
+	ServerPassword        string `db:"server_password" json:"server_password"`
+	ServerDomain          string `db:"server_domain" json:"server_domain"`
+	ServerIgnoreCert      bool   `db:"server_ignore_cert" json:"server_ignore_cert"`
+	ServerSecurity        string `db:"server_security" json:"server_security"`                 // "any", "nla", "tls", "rdp"
+	ServerAuthMode        string `db:"server_auth_mode" json:"server_auth_mode"`               // "static" or "prompt"
+	ServerAllowRemember   bool   `db:"server_allow_remember" json:"server_allow_remember"`     // allow users to save credentials
 	ServerDefaultSettings string `db:"server_default_settings" json:"server_default_settings"` // JSON default display settings
 
 	// Recording

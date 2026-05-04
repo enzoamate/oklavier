@@ -88,7 +88,7 @@ func (db *DB) GetImageByID(imageID string) (*models.Image, error) {
 
 // SessionRecord for DB insert
 type SessionRecord struct {
-	SessionID            uuid.UUID `db:"session_id"`
+	SessionID         uuid.UUID `db:"session_id"`
 	UserID            uuid.UUID `db:"user_id"`
 	ImageID           uuid.UUID `db:"image_id"`
 	ContainerID       string    `db:"container_id"`

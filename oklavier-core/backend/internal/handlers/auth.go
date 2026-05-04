@@ -43,7 +43,7 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 		return c.Status(403).JSON(fiber.Map{"error_message": "Account is locked"})
 	}
 
-if !auth.CheckPasswordSHA256(req.Password, user.Salt, user.PasswordHash) {
+	if !auth.CheckPasswordSHA256(req.Password, user.Salt, user.PasswordHash) {
 		// Increment failed attempts
 		user.FailedPWAttempts++
 		locked := user.FailedPWAttempts >= 5

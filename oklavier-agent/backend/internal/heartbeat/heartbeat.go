@@ -25,19 +25,19 @@ type Heartbeat struct {
 const AgentVersion = "1.0.2"
 
 type HeartbeatPayload struct {
-	AgentName    string `json:"agent_name"`
-	Region       string `json:"region"`
-	Namespace    string `json:"namespace"`
-	Status       string `json:"status"`
-	Version      string `json:"version"`
-	NodeCount    int    `json:"node_count"`
-	CPUTotal     int    `json:"cpu_total"`
-	MemoryTotalGB int   `json:"memory_total_gb"`
-	CPUUsed      int    `json:"cpu_used"`
-	MemoryUsedGB int    `json:"memory_used_gb"`
-	Sessions     int    `json:"active_sessions"`
-	PublicURL    string `json:"public_url"`
-	Timestamp    string `json:"timestamp"`
+	AgentName     string `json:"agent_name"`
+	Region        string `json:"region"`
+	Namespace     string `json:"namespace"`
+	Status        string `json:"status"`
+	Version       string `json:"version"`
+	NodeCount     int    `json:"node_count"`
+	CPUTotal      int    `json:"cpu_total"`
+	MemoryTotalGB int    `json:"memory_total_gb"`
+	CPUUsed       int    `json:"cpu_used"`
+	MemoryUsedGB  int    `json:"memory_used_gb"`
+	Sessions      int    `json:"active_sessions"`
+	PublicURL     string `json:"public_url"`
+	Timestamp     string `json:"timestamp"`
 }
 
 func New(controlPlane, token, agentName, region, namespace, publicURL string, prov *provisioner.Provisioner, guacMgr *guacamole.Manager) *Heartbeat {

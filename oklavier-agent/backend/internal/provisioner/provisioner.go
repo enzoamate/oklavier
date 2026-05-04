@@ -315,7 +315,7 @@ func (p *Provisioner) HandleCreateSession(c *fiber.Ctx) error {
 				Name:            "workspace",
 				Image:           req.DockerImage,
 				ImagePullPolicy: corev1.PullAlways,
-				Env:   envVars,
+				Env:             envVars,
 				Ports: []corev1.ContainerPort{
 					{Name: "vnc-ws", ContainerPort: 6901},
 					{Name: "vnc-tcp", ContainerPort: 5900},
@@ -477,8 +477,8 @@ func (p *Provisioner) HandleSessionStatus(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{
-		"status":  status,
-		"pod_ip":  pod.Status.PodIP,
+		"status":   status,
+		"pod_ip":   pod.Status.PodIP,
 		"pod_name": pod.Name,
 	})
 }

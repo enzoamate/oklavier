@@ -24,8 +24,8 @@ type LogBuffer struct {
 type LogEntry struct {
 	Timestamp string `json:"timestamp"`
 	Source    string `json:"source"`
-	Level    string `json:"level"`
-	Message  string `json:"message"`
+	Level     string `json:"level"`
+	Message   string `json:"message"`
 }
 
 var GlobalLogBuffer = &LogBuffer{maxSize: 500}

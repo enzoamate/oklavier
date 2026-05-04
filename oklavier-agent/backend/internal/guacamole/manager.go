@@ -20,17 +20,17 @@ type CreateServerSessionRequest struct {
 	UserID          string `json:"user_id"`
 	Lang            string `json:"lang"`
 	DefaultSettings string `json:"default_settings"`
-	Protocol        string `json:"protocol"`   // "rdp" or "vnc"
-	Hostname   string `json:"hostname"`
-	Port       int    `json:"port"`
-	Username   string `json:"username"`
-	Password   string `json:"password"`
-	Domain     string `json:"domain"`
-	IgnoreCert bool   `json:"ignore_cert"`
-	Security   string `json:"security"` // "any", "nla", "tls", "rdp"
-	Width      int    `json:"width"`
-	Height     int    `json:"height"`
-	ReadOnly   bool   `json:"read_only"`  // shadow session: read-only connection
+	Protocol        string `json:"protocol"` // "rdp" or "vnc"
+	Hostname        string `json:"hostname"`
+	Port            int    `json:"port"`
+	Username        string `json:"username"`
+	Password        string `json:"password"`
+	Domain          string `json:"domain"`
+	IgnoreCert      bool   `json:"ignore_cert"`
+	Security        string `json:"security"` // "any", "nla", "tls", "rdp"
+	Width           int    `json:"width"`
+	Height          int    `json:"height"`
+	ReadOnly        bool   `json:"read_only"` // shadow session: read-only connection
 	// Recording
 	RecordSessions bool   `json:"record_sessions"`
 	WorkspaceName  string `json:"workspace_name"`
