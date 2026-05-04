@@ -126,7 +126,7 @@ export default function AdminStoragePage() {
             <Input
               value={form.access_key}
               onChange={(e) => setForm({ ...form, access_key: e.target.value })}
-              placeholder="AKIAIOSFODNN7EXAMPLE"
+              placeholder="ACCESS_KEY_ID"
               className={inputClass}
             />
           </div>
@@ -136,7 +136,7 @@ export default function AdminStoragePage() {
               type="password"
               value={form.secret_key}
               onChange={(e) => setForm({ ...form, secret_key: e.target.value })}
-              placeholder="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+              placeholder="SECRET_ACCESS_KEY"
               className={inputClass}
             />
           </div>
