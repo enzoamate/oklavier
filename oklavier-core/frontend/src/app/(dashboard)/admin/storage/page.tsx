@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Loader2, Save, CheckCircle, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,11 +26,7 @@ export default function AdminStoragePage() {
     region: "",
   });
 
-  useEffect(() => {
-    loadSettings();
-  }, []);
-
-  async function loadSettings() {
+  const loadSettings = useCallback(async () => {
     setLoading(true);
     try {
       const res = await authFetch("/api/admin/storage", {
@@ -50,7 +46,11 @@ export default function AdminStoragePage() {
       }
     } catch {}
     setLoading(false);
-  }
+  }, []);
+
+  useEffect(() => {
+    loadSettings();
+  }, [loadSettings]);
 
   async function handleSave() {
     setSaving(true);

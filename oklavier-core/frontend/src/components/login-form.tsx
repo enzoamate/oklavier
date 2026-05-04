@@ -51,7 +51,7 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"form">)
   async function handleOIDC(providerId: string) {
     setSplash(true);
     // Redirect to Go API OIDC login endpoint
-    window.location.href = `/api/auth/oidc/${providerId}?callbackURL=/workspaces`;
+    window.location.assign(`/api/auth/oidc/${providerId}?callbackURL=/workspaces`);
   }
 
   const hasSSO = oidcProviders.length > 0;
