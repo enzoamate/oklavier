@@ -22,6 +22,7 @@ const eslintConfig = defineConfig([
       "@typescript-eslint/no-unused-vars": "warn",
       "react-hooks/exhaustive-deps": "warn",
       "react-hooks/preserve-manual-memoization": "warn",
+      "react-compiler/react-compiler": "warn",
       "@next/next/no-img-element": "warn",
     },
   },
