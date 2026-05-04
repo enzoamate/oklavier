@@ -47,7 +47,8 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
 
-      - uses: docker/build-push-action@v6
+      - id: build
+        uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.context }}/Dockerfile
@@ -57,8 +58,80 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,scope=${{ matrix.name }},mode=max
 
-  github-release:
+      - name: Trivy vulnerability scan
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.name }}@${{ steps.build.outputs.digest }}
+          format: sarif
+          output: trivy-${{ matrix.name }}.sarif
+          severity: CRITICAL,HIGH
+          exit-code: '0'
+          ignore-unfixed: true
+
+      - name: Upload Trivy results to Security tab
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-${{ matrix.name }}.sarif
+          category: trivy-${{ matrix.name }}
+
+  publish-helm:
     needs: build-push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      core_tgz: ${{ steps.pack.outputs.core_tgz }}
+      agent_tgz: ${{ steps.pack.outputs.agent_tgz }}
+    strategy:
+      matrix:
+        include:
+          - name: oklavier-core
+            path: oklavier-core/helm
+          - name: oklavier-agent
+            path: oklavier-agent/helm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: 'v3.16.1'
+
+      - name: Set chart version (tag releases only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          sed -i "s/^version:.*/version: $VERSION/" ${{ matrix.path }}/Chart.yaml
+          sed -i "s/^appVersion:.*/appVersion: \"$VERSION\"/" ${{ matrix.path }}/Chart.yaml
+
+      - name: helm package
+        id: pack
+        run: |
+          mkdir -p /tmp/charts
+          helm package ${{ matrix.path }} -d /tmp/charts
+          TGZ=$(ls /tmp/charts/${{ matrix.name }}-*.tgz)
+          echo "tgz=$TGZ" >> $GITHUB_OUTPUT
+
+      - name: helm registry login
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            helm registry login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+
+      - name: helm push (OCI)
+        run: |
+          helm push ${{ steps.pack.outputs.tgz }} oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts
+
+      - name: Upload chart tarball as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: chart-${{ matrix.name }}
+          path: ${{ steps.pack.outputs.tgz }}
+          retention-days: 7
+
+  github-release:
+    needs: [build-push, publish-helm]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -67,6 +140,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Download chart tarballs
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/charts
+          pattern: chart-*
+          merge-multiple: true
+
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          files: /tmp/charts/*.tgz

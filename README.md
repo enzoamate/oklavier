@@ -1,9 +1,13 @@
 # Oklavier
 
+**Website**: [oklavier.com](https://oklavier.com) · **Docs**: [docs.oklavier.com](https://docs.oklavier.com)
+
 [![CI](https://github.com/enzoamate/oklavier/actions/workflows/ci.yml/badge.svg)](https://github.com/enzoamate/oklavier/actions/workflows/ci.yml)
 [![Release](https://github.com/enzoamate/oklavier/actions/workflows/release.yml/badge.svg)](https://github.com/enzoamate/oklavier/actions/workflows/release.yml)
+[![codecov](https://codecov.io/gh/enzoamate/oklavier/branch/main/graph/badge.svg)](https://codecov.io/gh/enzoamate/oklavier)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![GHCR](https://img.shields.io/badge/ghcr-oklavier-blue?logo=docker)](https://github.com/enzoamate?tab=packages&repo_name=oklavier)
+[![Trivy scanned](https://img.shields.io/badge/trivy-scanned-success?logo=aqua)](https://github.com/enzoamate/oklavier/security/code-scanning)
 
 Self-hosted virtual workspace platform on Kubernetes. Stream desktop sessions to a browser via Apache Guacamole.
 
@@ -21,6 +25,19 @@ The **core** runs once (control plane: API + frontend + Postgres + Valkey). One 
 ## Quick start
 
 ### 1. Install the control plane
+
+From the OCI registry (recommended):
+
+```bash
+helm install oklavier oci://ghcr.io/enzoamate/charts/oklavier-core --version 1.0.2 \
+  --namespace oklavier --create-namespace \
+  --set jwtSecret="$(openssl rand -hex 32)" \
+  --set internalSecret="$(openssl rand -hex 32)" \
+  --set database.password="$(openssl rand -base64 24 | tr -d '+/=')" \
+  --set admin.password="$(openssl rand -base64 18 | tr -d '+/=')"
+```
+
+Or from a local checkout:
 
 ```bash
 helm install oklavier ./oklavier-core/helm \
@@ -40,7 +57,7 @@ Log into the control plane as admin → **Admin → Agents → New** → copy th
 ### 3. Install an agent
 
 ```bash
-helm install oklavier-agent ./oklavier-agent/helm \
+helm install oklavier-agent oci://ghcr.io/enzoamate/charts/oklavier-agent --version 1.0.2 \
   --namespace oklavier-agent --create-namespace \
   --set agent.name="cluster-1" \
   --set agent.token="<token-from-step-2>" \

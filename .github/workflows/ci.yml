@@ -40,7 +40,15 @@ jobs:
         run: go build ./...
       - name: go test
         working-directory: ${{ matrix.component }}
-        run: go test -race -count=1 ./...
+        run: go test -race -count=1 -coverprofile=coverage.out ./...
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: ${{ matrix.component }}/coverage.out
+          flags: ${{ matrix.component == 'oklavier-core/backend' && 'core' || 'agent' }}
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
 
   lint-frontend:
     name: Lint & build frontend
