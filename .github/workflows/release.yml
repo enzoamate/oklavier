@@ -15,7 +15,9 @@ jobs:
     permissions:
       contents: read
       packages: write
+      security-events: write
     strategy:
+      fail-fast: false
       matrix:
         include:
           - name: oklavier-api
@@ -86,6 +88,7 @@ jobs:
       core_tgz: ${{ steps.pack.outputs.core_tgz }}
       agent_tgz: ${{ steps.pack.outputs.agent_tgz }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - name: oklavier-core
