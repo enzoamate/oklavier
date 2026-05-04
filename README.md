@@ -91,6 +91,10 @@ docker build -t oklavier-agent    oklavier-agent/backend
 
 **Branch model**: trunk-based. `main` is always deployable, features go in PRs, releases are tags. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Roadmap
+
+Current and planned features live in [ROADMAP.md](ROADMAP.md). Open a [discussion](https://github.com/enzoamate/oklavier/discussions) to propose, debate, or claim an item.
+
 ## Configuration
 
 All secrets are required via env / Helm `values.yaml`. No defaults are committed.
