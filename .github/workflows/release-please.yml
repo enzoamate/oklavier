@@ -1,0 +1,23 @@
+name: Release Please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          release-type: simple
+          # Reads commit messages from main and opens a "release PR".
+          # Merging that PR creates the tag (vX.Y.Z), which triggers release.yml.
+          # Conventional commits drive the bump:
+          #   feat:  -> minor bump
+          #   fix:   -> patch bump
+          #   feat!: or BREAKING CHANGE -> major bump

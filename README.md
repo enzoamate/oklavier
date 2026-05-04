@@ -1,5 +1,10 @@
 # Oklavier
 
+[![CI](https://github.com/enzoamate/oklavier/actions/workflows/ci.yml/badge.svg)](https://github.com/enzoamate/oklavier/actions/workflows/ci.yml)
+[![Release](https://github.com/enzoamate/oklavier/actions/workflows/release.yml/badge.svg)](https://github.com/enzoamate/oklavier/actions/workflows/release.yml)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![GHCR](https://img.shields.io/badge/ghcr-oklavier-blue?logo=docker)](https://github.com/enzoamate?tab=packages&repo_name=oklavier)
+
 Self-hosted virtual workspace platform on Kubernetes. Stream desktop sessions to a browser via Apache Guacamole.
 
 ## Architecture
@@ -56,7 +61,18 @@ docker build -t oklavier-frontend oklavier-core/frontend
 docker build -t oklavier-agent    oklavier-agent/backend
 ```
 
-CI/CD: see [`.github/workflows/build.yml`](.github/workflows/build.yml) (manual `workflow_dispatch`, pushes `<version>` + `:latest` to GHCR).
+## CI/CD
+
+| Trigger | Workflow | Effect |
+|---|---|---|
+| PR / push branch | [`ci.yml`](.github/workflows/ci.yml) | Lint (Go, TS, Helm) + tests + Docker build (no push) |
+| Push to `main` | [`release.yml`](.github/workflows/release.yml) | Push `ghcr.io/<owner>/oklavier-*:main-<sha>` and `:latest` |
+| Tag `v*.*.*` | [`release.yml`](.github/workflows/release.yml) | Push `:vX.Y.Z` + `:X.Y` + `:X` + `:latest` + GitHub Release |
+| Conventional commit on main | [`release-please.yml`](.github/workflows/release-please.yml) | Auto-opens release PR with version bump + CHANGELOG |
+| Manual | [`build.yml`](.github/workflows/build.yml) | Ad-hoc dispatch with target/version inputs |
+| Weekly | [`dependabot.yml`](.github/dependabot.yml) | Auto-PR for Go / npm / actions / Docker base images |
+
+**Branch model**: trunk-based. `main` is always deployable, features go in PRs, releases are tags. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Configuration
 
