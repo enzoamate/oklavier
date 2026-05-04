@@ -1,0 +1,101 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oklavier-agent
+  namespace: {{ include "oklavier-agent.namespace" . }}
+  labels:
+    {{- include "oklavier-agent.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      app: oklavier-agent
+  template:
+    metadata:
+      labels:
+        app: oklavier-agent
+    spec:
+      serviceAccountName: oklavier-agent
+      {{- if .Values.imagePullSecret.enabled }}
+      imagePullSecrets:
+        - name: {{ .Values.imagePullSecret.name }}
+      {{- end }}
+      volumes:
+        - name: recordings
+          {{- if .Values.recordings.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: oklavier-agent-recordings
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      containers:
+        - name: agent
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 80
+              protocol: TCP
+            - containerPort: 443
+              protocol: UDP
+          volumeMounts:
+            - name: recordings
+              mountPath: /tmp/guac-recordings
+          env:
+            - name: OKLAVIER_AGENT_NAME
+              value: {{ required "agent.name is required" .Values.agent.name | quote }}
+            - name: OKLAVIER_AGENT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: oklavier-agent
+                  key: token
+            - name: OKLAVIER_CONTROL_PLANE
+              value: {{ required "agent.controlPlane is required" .Values.agent.controlPlane | quote }}
+            - name: OKLAVIER_REGION
+              value: {{ .Values.agent.region | quote }}
+            - name: OKLAVIER_NAMESPACE
+              value: {{ include "oklavier-agent.namespace" . | quote }}
+            - name: OKLAVIER_PUBLIC_URL
+              value: {{ .Values.agent.publicURL | quote }}
+            - name: OKLAVIER_FRONTEND_URL
+              value: {{ .Values.agent.frontendURL | default "" | quote }}
+            - name: JWT_SECRET
+              value: {{ .Values.agent.jwtSecret | default "" | quote }}
+            - name: GUACD_ADDRESS
+              value: {{ .Values.agent.guacdAddress | default "guacd:4822" | quote }}
+            - name: VALKEY_URL
+              value: {{ .Values.agent.valkeyURL | default "oklavier-valkey.oklavier.svc.cluster.local:6379" | quote }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 80
+            initialDelaySeconds: 3
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oklavier-agent
+  namespace: {{ include "oklavier-agent.namespace" . }}
+spec:
+  type: LoadBalancer
+  selector:
+    app: oklavier-agent
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+      protocol: TCP
+    - name: webrtc
+      port: 443
+      targetPort: 443
+      protocol: UDP

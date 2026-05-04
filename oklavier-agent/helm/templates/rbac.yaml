@@ -1,0 +1,73 @@
+{{- if .Values.rbac.create }}
+# Namespaced Role — agent only manages its own namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: oklavier-agent
+  namespace: {{ include "oklavier-agent.namespace" . }}
+  labels:
+    {{- include "oklavier-agent.labels" . | nindent 4 }}
+rules:
+  # Workspace pods: create, delete, get status (no exec, no update)
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  # Services for workspace pods
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "create", "delete"]
+  # Persistent volumes for workspace storage
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "create", "delete"]
+  # Secrets for registry credentials
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "create", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: oklavier-agent
+  namespace: {{ include "oklavier-agent.namespace" . }}
+  labels:
+    {{- include "oklavier-agent.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: oklavier-agent
+subjects:
+  - kind: ServiceAccount
+    name: oklavier-agent
+    namespace: {{ include "oklavier-agent.namespace" . }}
+---
+# Read-only cluster access for node metrics (needed for heartbeat)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: oklavier-agent-readonly
+  labels:
+    {{- include "oklavier-agent.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["nodes", "pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: oklavier-agent-readonly
+  labels:
+    {{- include "oklavier-agent.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: oklavier-agent-readonly
+subjects:
+  - kind: ServiceAccount
+    name: oklavier-agent
+    namespace: {{ include "oklavier-agent.namespace" . }}
+{{- end }}
