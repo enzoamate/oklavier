@@ -1,0 +1,18 @@
+{{- if .Values.recordings.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: oklavier-agent-recordings
+  namespace: {{ include "oklavier-agent.namespace" . }}
+  labels:
+    {{- include "oklavier-agent.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: {{ .Values.recordings.persistence.size }}
+  {{- if .Values.recordings.persistence.storageClass }}
+  storageClassName: {{ .Values.recordings.persistence.storageClass | quote }}
+  {{- end }}
+{{- end }}

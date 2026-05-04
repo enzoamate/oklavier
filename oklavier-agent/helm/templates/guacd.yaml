@@ -1,0 +1,59 @@
+{{- if .Values.guacd.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: guacd
+  namespace: {{ include "oklavier-agent.namespace" . }}
+  labels:
+    {{- include "oklavier-agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: guacd
+spec:
+  replicas: {{ .Values.guacd.replicas | default 1 }}
+  selector:
+    matchLabels:
+      app: guacd
+  template:
+    metadata:
+      labels:
+        app: guacd
+    spec:
+      {{- if .Values.imagePullSecret.enabled }}
+      imagePullSecrets:
+        - name: {{ .Values.imagePullSecret.name }}
+      {{- end }}
+      containers:
+        - name: guacd
+          image: "{{ .Values.guacd.image.repository }}:{{ .Values.guacd.image.tag }}"
+          ports:
+            - containerPort: 4822
+              protocol: TCP
+          volumeMounts:
+            - name: recordings
+              mountPath: /tmp/guac-recordings
+          resources:
+            {{- toYaml .Values.guacd.resources | nindent 12 }}
+      volumes:
+        - name: recordings
+          {{- if .Values.recordings.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: oklavier-agent-recordings
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: guacd
+  namespace: {{ include "oklavier-agent.namespace" . }}
+  labels:
+    {{- include "oklavier-agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: guacd
+spec:
+  selector:
+    app: guacd
+  ports:
+    - port: 4822
+      targetPort: 4822
+      protocol: TCP
+{{- end }}

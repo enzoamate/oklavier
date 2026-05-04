@@ -3,10 +3,10 @@
 *.dll
 *.so
 *.dylib
-oklavier-api
-oklavier-api-linux
-oklavier-agent
-oklavier-agent-linux
+/oklavier-core/backend/oklavier-api
+/oklavier-core/backend/oklavier-api-linux
+/oklavier-agent/backend/oklavier-agent
+/oklavier-agent/backend/oklavier-agent-linux
 
 # Go
 *.test

@@ -1,0 +1,7 @@
+static/novnc/node_modules
+static/novnc/tests
+static/novnc/docs
+static/novnc/po
+static/novnc/snap
+static/novnc/utils
+static/novnc/.git

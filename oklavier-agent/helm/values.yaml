@@ -1,0 +1,72 @@
+# Oklavier Agent Helm Values
+
+agent:
+  name: ""
+  token: ""
+  controlPlane: ""
+  region: "default"
+  namespace: oklavier-agent
+  publicURL: ""  # Set to https://agent-name.example.com for WebRTC
+  frontendURL: ""  # Public URL for browser redirects (e.g. https://oklavier.example.com)
+  jwtSecret: ""    # Same as core JWT_SECRET — for session token verification
+  valkeyURL: "oklavier-valkey.oklavier.svc.cluster.local:6379"
+  guacdAddress: "guacd:4822"
+
+image:
+  repository: ghcr.io/enzoamate/oklavier-agent
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicas: 1
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+service:
+  type: LoadBalancer
+  port: 80
+  webrtcPort: 443
+
+# RBAC - agent needs permissions to create pods/services/PVCs
+rbac:
+  create: true
+
+guacd:
+  enabled: true
+  replicas: 1
+  image:
+    repository: guacamole/guacd
+    tag: "1.6.0"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# Session recordings volume (shared between agent and guacd containers)
+recordings:
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: ""
+
+imagePullSecret:
+  enabled: false
+  name: oklavier-agent-registry
+  registry: ""
+  username: ""
+  password: ""
