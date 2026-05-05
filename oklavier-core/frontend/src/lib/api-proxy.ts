@@ -46,7 +46,6 @@ async function proxyResponse(res: Response): Promise<NextResponse> {
   const out = NextResponse.json(data, { status: res.status });
   // Fetch's Headers iterator (Web standard) supports getSetCookie() in modern
   // Node. Fallback to the raw header otherwise.
-  // @ts-expect-error: getSetCookie is non-standard but Node 18+/undici implements it
   const setCookies: string[] | undefined = res.headers.getSetCookie?.();
   if (setCookies && setCookies.length) {
     for (const sc of setCookies) {

@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect } from "react";
+import { Suspense, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
-// OIDC callback. Tokens are now set by the Go backend as httpOnly cookies
-// during /api/auth/oidc/<id>/callback (server-side redirect). This page
-// just navigates to the dashboard once.
-export default function OIDCCallbackPage() {
+// Disable prerender — this page reads query params at runtime.
+export const dynamic = "force-dynamic";
+
+function CallbackInner() {
   const router = useRouter();
   const params = useSearchParams();
 
@@ -18,9 +18,16 @@ export default function OIDCCallbackPage() {
     }
   }, [router, params]);
 
+  return null;
+}
+
+export default function OIDCCallbackPage() {
   return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#0f1225", color: "rgba(255,255,255,0.4)", fontFamily: "Inter, system-ui, sans-serif" }}>
-      Authenticating...
-    </div>
+    <Suspense fallback={null}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#0f1225", color: "rgba(255,255,255,0.4)", fontFamily: "Inter, system-ui, sans-serif" }}>
+        Authenticating...
+      </div>
+      <CallbackInner />
+    </Suspense>
   );
 }

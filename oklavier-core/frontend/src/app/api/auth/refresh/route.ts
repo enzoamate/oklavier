@@ -28,7 +28,6 @@ export async function POST(request: Request) {
   });
   const data = await res.json().catch(() => ({}));
   const out = NextResponse.json(data, { status: res.status });
-  // @ts-expect-error: getSetCookie is non-standard but Node 18+/undici implements it
   const setCookies: string[] | undefined = res.headers.getSetCookie?.();
   if (setCookies?.length) {
     for (const sc of setCookies) out.headers.append("set-cookie", sc);
