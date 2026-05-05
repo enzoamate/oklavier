@@ -2,6 +2,7 @@ package provisioner
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -12,7 +13,6 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -20,6 +20,84 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
+
+// generateVNCPassword returns a 128-bit random base64 string suitable as a
+// session-bound VNC auth secret. Replaces the previous truncated-UUID variant
+// that had only ~56 bits of entropy.
+func generateVNCPassword() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+// disallowedMountPaths blocks mount targets that would shadow critical
+// system directories. Even with EmptyDir (currently used) an attacker can
+// hide the image's binaries; if the source ever changes to HostPath this
+// also prevents container escape via /var/run/docker.sock etc.
+var disallowedMountPaths = []string{
+	"/", "/etc", "/proc", "/sys", "/dev",
+	"/var", "/var/run", "/var/lib", "/var/log",
+	"/usr", "/usr/bin", "/usr/sbin", "/usr/lib", "/usr/local",
+	"/bin", "/sbin", "/lib", "/lib64",
+	"/root", "/boot",
+}
+
+// disallowedEnvKeyPrefixes blocks environment variables that change how the
+// dynamic loader / language runtimes behave. Without this, a workspace
+// definition can drop `LD_PRELOAD=/path/to/lib.so` (or `PYTHONSTARTUP=...`)
+// on every user session.
+var disallowedEnvKeyPrefixes = []string{
+	"LD_", "DYLD_", "PYTHONSTARTUP", "PYTHONPATH",
+	"NODE_OPTIONS", "PERL5OPT", "PERL5LIB", "RUBYOPT",
+	"PATH", // tightly controlled paths only
+}
+
+func envKeyAllowed(k string) bool {
+	for _, p := range disallowedEnvKeyPrefixes {
+		if strings.HasPrefix(k, p) {
+			return false
+		}
+	}
+	return true
+}
+
+// parseExecArgv extracts an explicit argv from an exec_config entry.
+// Accepts only `{"argv": ["binary", "arg1", ...]}`. A legacy `cmd: "string"`
+// is REJECTED to prevent shell-string injection.
+func parseExecArgv(cfg map[string]interface{}) []string {
+	raw, ok := cfg["argv"].([]interface{})
+	if !ok || len(raw) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, v := range raw {
+		s, ok := v.(string)
+		if !ok || s == "" {
+			return nil
+		}
+		out = append(out, s)
+	}
+	// argv[0] (binary path) must be a plain absolute path or a basename.
+	if strings.ContainsAny(out[0], "&|;`$\n\r") {
+		return nil
+	}
+	return out
+}
+
+func mountPathAllowed(p string) bool {
+	clean := strings.TrimRight(p, "/")
+	if clean == "" {
+		return false
+	}
+	for _, bad := range disallowedMountPaths {
+		if clean == bad {
+			return false
+		}
+	}
+	return true
+}
 
 type Provisioner struct {
 	client    *kubernetes.Clientset
@@ -107,14 +185,26 @@ func (p *Provisioner) HandleCreateSession(c *fiber.Ctx) error {
 		DockerPassword string          `json:"docker_password"`
 	}
 	if err := c.BodyParser(&req); err != nil {
-		log.Printf("CreateSession: body parse error: %v, body: %s", err, string(c.Body()))
-		return c.Status(400).JSON(fiber.Map{"error": "Invalid request: " + err.Error()})
+		// SECURITY: don't log the raw body — it contains docker_password,
+		// run_config and volume_mappings, which leaked to the agent log buffer
+		// served by GET /api/logs.
+		log.Printf("CreateSession: body parse error: %v", err)
+		return c.Status(400).JSON(fiber.Map{"error": "Invalid request"})
 	}
 
 	ctx := context.Background()
+	if len(req.SessionID) < 20 {
+		return c.Status(400).JSON(fiber.Map{"error": "session_id too short"})
+	}
 	podName := fmt.Sprintf("oklavier-%s", req.SessionID[:20])
 	svcName := fmt.Sprintf("oklavier-svc-%s", req.SessionID[:20])
-	vncPW := uuid.New().String()[:16]
+	// SECURITY: previously used uuid.New().String()[:16], which keeps two
+	// hyphens and the version-`4` nibble — only ~56 bits of entropy. Use
+	// crypto/rand for 16 bytes -> 128 bits -> base64.
+	vncPW, err := generateVNCPassword()
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "Failed to generate VNC password"})
+	}
 
 	shmSize := req.SHMSize
 	if shmSize == "" {
@@ -207,18 +297,39 @@ func (p *Provisioner) HandleCreateSession(c *fiber.Ctx) error {
 		json.Unmarshal(req.RunConfig, &runConfig)
 	}
 	if runConfig != nil {
-		// Environment variables from run_config
+		// Environment variables from run_config — SECURITY: filter dangerous
+		// loader/runtime keys (LD_PRELOAD etc.) which would let a workspace
+		// definition hijack every user session.
 		if envMap, ok := runConfig["environment"].(map[string]interface{}); ok {
+			added := 0
 			for k, v := range envMap {
+				if !envKeyAllowed(k) {
+					log.Printf("[security] dropped disallowed env key %q from workspace", k)
+					continue
+				}
 				envVars = append(envVars, corev1.EnvVar{Name: k, Value: fmt.Sprintf("%v", v)})
+				added++
+				if added >= 64 {
+					break
+				}
 			}
 		}
 		// Environment as list "KEY=VALUE"
 		if envList, ok := runConfig["environment"].([]interface{}); ok {
+			added := 0
 			for _, item := range envList {
 				s := fmt.Sprintf("%v", item)
 				if idx := strings.Index(s, "="); idx > 0 {
-					envVars = append(envVars, corev1.EnvVar{Name: s[:idx], Value: s[idx+1:]})
+					k := s[:idx]
+					if !envKeyAllowed(k) {
+						log.Printf("[security] dropped disallowed env key %q from workspace", k)
+						continue
+					}
+					envVars = append(envVars, corev1.EnvVar{Name: k, Value: s[idx+1:]})
+					added++
+					if added >= 64 {
+						break
+					}
 				}
 			}
 		}
@@ -235,7 +346,13 @@ func (p *Provisioner) HandleCreateSession(c *fiber.Ctx) error {
 	}
 	if volMappings != nil {
 		volIdx := len(volumes)
+		mountCount := 0
+		const maxMounts = 32
 		for hostPath, config := range volMappings {
+			if mountCount >= maxMounts {
+				log.Printf("[security] volume_mappings cap reached (%d), ignoring extras", maxMounts)
+				break
+			}
 			volName := fmt.Sprintf("extra-vol-%d", volIdx)
 			mountPath := hostPath
 			readOnly := false
@@ -246,6 +363,13 @@ func (p *Provisioner) HandleCreateSession(c *fiber.Ctx) error {
 				if mode, ok := cfg["mode"].(string); ok && mode == "ro" {
 					readOnly = true
 				}
+			}
+			// SECURITY: reject mount paths that would shadow critical system
+			// directories. Even with EmptyDir an attacker can hide image
+			// binaries; with HostPath this would be a container escape.
+			if !mountPathAllowed(mountPath) {
+				log.Printf("[security] rejected disallowed mount path %q", mountPath)
+				continue
 			}
 			volumes = append(volumes, corev1.Volume{
 				Name: volName,
@@ -259,6 +383,7 @@ func (p *Provisioner) HandleCreateSession(c *fiber.Ctx) error {
 				ReadOnly:  readOnly,
 			})
 			volIdx++
+			mountCount++
 		}
 	}
 
@@ -306,16 +431,29 @@ func (p *Provisioner) HandleCreateSession(c *fiber.Ctx) error {
 			},
 		},
 		Spec: corev1.PodSpec{
-			Hostname:         hostname,
-			ImagePullSecrets: imagePullSecrets,
+			Hostname:                     hostname,
+			ImagePullSecrets:             imagePullSecrets,
+			AutomountServiceAccountToken: func() *bool { b := false; return &b }(),
 			SecurityContext: &corev1.PodSecurityContext{
-				SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeUnconfined},
+				// SECURITY: was Unconfined — that disables every syscall filter
+				// and is a documented container escape primitive. RuntimeDefault
+				// is the supported safe profile.
+				SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 			},
 			Containers: []corev1.Container{{
 				Name:            "workspace",
 				Image:           req.DockerImage,
 				ImagePullPolicy: corev1.PullAlways,
 				Env:             envVars,
+				SecurityContext: &corev1.SecurityContext{
+					// SECURITY: drop all caps + forbid privilege escalation. The
+					// previous PodSpec set none of these, so workspace pods ran
+					// with the default (sometimes root) capability set.
+					AllowPrivilegeEscalation: func() *bool { b := false; return &b }(),
+					Capabilities: &corev1.Capabilities{
+						Drop: []corev1.Capability{"ALL"},
+					},
+				},
 				Ports: []corev1.ContainerPort{
 					{Name: "vnc-ws", ContainerPort: 6901},
 					{Name: "vnc-tcp", ContainerPort: 5900},
@@ -338,7 +476,7 @@ func (p *Provisioner) HandleCreateSession(c *fiber.Ctx) error {
 		},
 	}
 
-	_, err := p.client.CoreV1().Pods(p.namespace).Create(ctx, pod, metav1.CreateOptions{})
+	_, err = p.client.CoreV1().Pods(p.namespace).Create(ctx, pod, metav1.CreateOptions{})
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "Failed to create pod: " + err.Error()})
 	}
@@ -349,6 +487,11 @@ func (p *Provisioner) HandleCreateSession(c *fiber.Ctx) error {
 		json.Unmarshal(req.ExecConfig, &execConfigs)
 	}
 	if len(execConfigs) > 0 {
+		// SECURITY: cap the number of post-start commands to prevent abuse.
+		const maxExec = 10
+		if len(execConfigs) > maxExec {
+			execConfigs = execConfigs[:maxExec]
+		}
 		nsName := p.namespace
 		k8sClient := p.client
 		go func() {
@@ -361,17 +504,25 @@ func (p *Provisioner) HandleCreateSession(c *fiber.Ctx) error {
 				}
 			}
 			for _, execCfg := range execConfigs {
-				cmd, ok := execCfg["cmd"].(string)
-				if !ok {
+				// SECURITY: previously, `cmd` was passed to `sh -c` inside the
+				// pod, allowing arbitrary shell injection / chained commands
+				// from any workspace template. We now require explicit argv
+				// (`argv: ["/path/to/binary", "arg1", "arg2"]`) and disallow
+				// the legacy `cmd` string entirely. No shell, no metacharacter
+				// expansion.
+				argv := parseExecArgv(execCfg)
+				if len(argv) == 0 {
+					log.Printf("[security] exec_config entry rejected: missing or invalid argv")
 					continue
 				}
-				log.Printf("ExecConfig: running '%s' in %s", cmd, podName)
-				execCmd := exec.Command("kubectl", "exec", "-n", nsName, podName, "--", "sh", "-c", cmd)
+				log.Printf("ExecConfig: running argv=%v in %s", argv, podName)
+				kubectlArgs := append([]string{"exec", "-n", nsName, podName, "--"}, argv...)
+				execCmd := exec.Command("kubectl", kubectlArgs...)
 				output, err := execCmd.CombinedOutput()
 				if err != nil {
 					log.Printf("ExecConfig: error: %v output: %s", err, string(output))
 				} else {
-					log.Printf("ExecConfig: '%s' completed", cmd)
+					log.Printf("ExecConfig: argv[0]=%q completed", argv[0])
 				}
 			}
 		}()

@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,7 +13,6 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"oklavier-api/internal/agent"
 	"oklavier-api/internal/auth"
@@ -20,7 +21,6 @@ import (
 	"oklavier-api/internal/metrics"
 	"oklavier-api/internal/middleware"
 	"oklavier-api/internal/models"
-	"os"
 )
 
 type SessionHandler struct {
@@ -30,31 +30,44 @@ type SessionHandler struct {
 	Cache       *cache.Cache
 }
 
-// generateSessionToken creates a short-lived JWT for agent viewer access
-func generateSessionToken(userID, role, sessionID string) string {
-	secret := os.Getenv("JWT_SECRET")
-	if secret == "" {
-		return ""
+// mintAndAdmitBearer generates an opaque random session bearer (32 bytes hex)
+// and pushes it to the agent server-to-server via /api/admit-bearer. The
+// browser only ever sees this opaque value — no JWT, no claims, fully
+// revocable, scoped to one session, TTL 5 minutes.
+func mintAndAdmitBearer(agentEndpoint, agentToken, sessionID, userID, role string) (string, error) {
+	if agentEndpoint == "" || agentToken == "" {
+		return "", fmt.Errorf("agent endpoint not configured")
 	}
-	claims := jwt.MapClaims{
-		"user_id":    userID,
-		"role":       role,
-		"session_id": sessionID,
-		"exp":        time.Now().Add(2 * time.Hour).Unix(),
-		"iat":        time.Now().Unix(),
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
 	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	signed, err := token.SignedString([]byte(secret))
-	if err != nil {
-		log.Printf("Failed to sign session token: %v", err)
-		return ""
+	bearer := hex.EncodeToString(b)
+	body, _ := json.Marshal(map[string]interface{}{
+		"bearer":      bearer,
+		"session_id":  sessionID,
+		"user_id":     userID,
+		"role":        role,
+		"ttl_seconds": 300,
+	})
+	if _, err := callAgent(agentEndpoint, agentToken, "/api/admit-bearer", body); err != nil {
+		return "", err
 	}
-	return signed
+	return bearer, nil
 }
 
-// GenerateGuestSessionToken creates a session token for guest access (no user account).
-func GenerateGuestSessionToken(guestUserID, sessionID string) string {
-	return generateSessionToken(guestUserID, "guest", sessionID)
+// revokeBearer asks the agent to drop all bearers for a session.
+func revokeBearer(agentEndpoint, agentToken, sessionID string) {
+	if agentEndpoint == "" {
+		return
+	}
+	body, _ := json.Marshal(map[string]string{"session_id": sessionID})
+	_, _ = callAgent(agentEndpoint, agentToken, "/api/revoke-bearer", body)
+}
+
+// GenerateGuestSessionBearer is the guest-flow variant.
+func GenerateGuestSessionBearer(agentEndpoint, agentToken, guestUserID, sessionID string) (string, error) {
+	return mintAndAdmitBearer(agentEndpoint, agentToken, sessionID, guestUserID, "guest")
 }
 
 func (h *SessionHandler) GetWorkspaces(c *fiber.Ctx) error {
@@ -132,7 +145,10 @@ func (h *SessionHandler) GetUserSessions(c *fiber.Ctx) error {
 		if s.AgentID != "" {
 			h.DB.Get(&agentPublicURL, "SELECT COALESCE(public_url, '') FROM agent WHERE id = $1", s.AgentID)
 		}
-		userRole, _ := c.Locals("user_role").(string)
+		_ = c.Locals("user_role")
+		// SECURITY: session_token is no longer minted in the list. Clients must
+		// call POST /api/session/connect to obtain a fresh short-lived bearer
+		// just before opening the viewer.
 		result[i] = fiber.Map{
 			"session_id":         s.ID,
 			"operational_status": s.Status,
@@ -144,7 +160,6 @@ func (h *SessionHandler) GetUserSessions(c *fiber.Ctx) error {
 			"agent_vnc_url":      agentPublicURL,
 			"session_type":       s.SessionType,
 			"workspace_type":     s.WorkspaceType,
-			"session_token":      generateSessionToken(userID, userRole, s.ID),
 			"image": fiber.Map{
 				"image_id":      s.WorkspaceID,
 				"friendly_name": s.ImageName,
@@ -163,7 +178,6 @@ func (h *SessionHandler) RequestSession(c *fiber.Ctx) error {
 	}
 	var req struct {
 		ImageID        string `json:"image_id" validate:"required"`
-		UserID         string `json:"user_id"`
 		AgentID        string `json:"agent_id"`
 		Lang           string `json:"lang"`
 		ServerUsername string `json:"server_username"`
@@ -178,7 +192,13 @@ func (h *SessionHandler) RequestSession(c *fiber.Ctx) error {
 		log.Printf("CreateSession: validation failed - %v", err)
 		return c.Status(400).JSON(fiber.Map{"error_message": "image_id required"})
 	}
-	log.Printf("CreateSession: image_id=%s user_id=%s", req.ImageID, req.UserID)
+	// SECURITY: identity comes from the authenticated session, NEVER from the body.
+	// Trusting authUserID let any logged-in user impersonate another (incl. admins).
+	authUserID, _ := c.Locals("user_id").(string)
+	if authUserID == "" {
+		return c.Status(401).JSON(fiber.Map{"error_message": "Not authenticated"})
+	}
+	log.Printf("CreateSession: image_id=%s user_id=%s", req.ImageID, authUserID)
 
 	// Get workspace from our DB
 	workspace, err := h.DB.GetWorkspace(req.ImageID)
@@ -190,26 +210,26 @@ func (h *SessionHandler) RequestSession(c *fiber.Ctx) error {
 
 	// Check group access - admins bypass
 	isAdmin := false
-	if req.UserID != "" {
+	if authUserID != "" {
 		var role string
-		err := h.DB.QueryRow(`SELECT COALESCE(role,'user') FROM "user" WHERE id = $1`, req.UserID).Scan(&role)
+		err := h.DB.QueryRow(`SELECT COALESCE(role,'user') FROM "user" WHERE id = $1`, authUserID).Scan(&role)
 		log.Printf("CreateSession: user role query err=%v role=%s", err, role)
 		if err == nil {
 			isAdmin = role == "admin"
 		}
 	}
 	log.Printf("CreateSession: isAdmin=%v", isAdmin)
-	if !isAdmin && req.UserID != "" && !h.DB.UserCanAccessWorkspace(req.UserID, req.ImageID) {
+	if !isAdmin && authUserID != "" && !h.DB.UserCanAccessWorkspace(authUserID, req.ImageID) {
 		return c.Status(403).JSON(fiber.Map{"error_message": "You don't have access to this workspace"})
 	}
 
 	// Check quotas (server workspaces don't consume CPU/memory, only session count)
 	if workspace.WorkspaceType == "server" {
-		if err := h.checkQuotas(req.UserID, 0, 0); err != nil {
+		if err := h.checkQuotas(authUserID, 0, 0); err != nil {
 			return c.Status(429).JSON(fiber.Map{"error_message": err.Error()})
 		}
 	} else {
-		if err := h.checkQuotas(req.UserID, workspace.Cores, workspace.Memory); err != nil {
+		if err := h.checkQuotas(authUserID, workspace.Cores, workspace.Memory); err != nil {
 			return c.Status(429).JSON(fiber.Map{"error_message": err.Error()})
 		}
 	}
@@ -266,7 +286,7 @@ func (h *SessionHandler) RequestSession(c *fiber.Ctx) error {
 		}
 		agentBody := map[string]interface{}{
 			"session_id":       sessionID,
-			"user_id":          req.UserID,
+			"user_id":          authUserID,
 			"lang":             lang,
 			"protocol":         workspace.ServerProtocol,
 			"hostname":         workspace.ServerHostname,
@@ -305,7 +325,7 @@ func (h *SessionHandler) RequestSession(c *fiber.Ctx) error {
 		}
 		dbSession := &models.WorkspaceSession{
 			ID:          sessionID,
-			UserID:      req.UserID,
+			UserID:      authUserID,
 			WorkspaceID: workspace.ID,
 			ContainerIP: workspace.ServerHostname,
 			Status:      "running",
@@ -323,8 +343,13 @@ func (h *SessionHandler) RequestSession(c *fiber.Ctx) error {
 		h.DB.QueryRow("SELECT COALESCE(public_url, '') FROM agent WHERE id = $1", agentID).Scan(&agentPublicURL)
 
 		userRole, _ := c.Locals("user_role").(string)
-		sessionToken := generateSessionToken(req.UserID, userRole, sessionID)
-		h.DB.LogAudit(req.UserID, "", "create", "session", sessionID, workspace.FriendlyName, c.IP())
+		sessionToken, err := mintAndAdmitBearer(agentEndpoint, agentToken, sessionID, authUserID, userRole)
+		if err != nil {
+			cleanupBody, _ := json.Marshal(map[string]string{"session_id": sessionID})
+			callAgent(agentEndpoint, agentToken, "/api/destroy-server-session", cleanupBody)
+			return c.Status(500).JSON(fiber.Map{"error_message": "Failed to issue session bearer"})
+		}
+		h.DB.LogAudit(authUserID, "", "create", "session", sessionID, workspace.FriendlyName, c.IP())
 		metrics.SessionsCreatedTotal.Add(1)
 		return c.JSON(fiber.Map{
 			"session_id":    sessionID,
@@ -344,7 +369,7 @@ func (h *SessionHandler) RequestSession(c *fiber.Ctx) error {
 		"shm_size":        workspace.SHMSize,
 		"persistent":      workspace.Persistent,
 		"persistent_size": workspace.PersistentSize,
-		"user_id":         req.UserID,
+		"user_id":         authUserID,
 		"workspace_id":    workspace.ID,
 		"run_config":      json.RawMessage(workspace.RunConfig),
 		"exec_config":     json.RawMessage(workspace.ExecConfig),
@@ -379,7 +404,7 @@ func (h *SessionHandler) RequestSession(c *fiber.Ctx) error {
 	vncPort := 5900
 	guacBody := map[string]interface{}{
 		"session_id":       sessionID,
-		"user_id":          req.UserID,
+		"user_id":          authUserID,
 		"lang":             lang,
 		"protocol":         "vnc",
 		"hostname":         sessionResp.PodIP,
@@ -418,7 +443,7 @@ func (h *SessionHandler) RequestSession(c *fiber.Ctx) error {
 	}
 	dbSession := &models.WorkspaceSession{
 		ID:          sessionID,
-		UserID:      req.UserID,
+		UserID:      authUserID,
 		WorkspaceID: workspace.ID,
 		PodName:     sessionResp.PodName,
 		ServiceName: sessionResp.ServiceName,
@@ -439,8 +464,13 @@ func (h *SessionHandler) RequestSession(c *fiber.Ctx) error {
 	h.DB.QueryRow("SELECT COALESCE(public_url, '') FROM agent WHERE id = $1", agentID).Scan(&agentPublicURL)
 
 	userRole, _ := c.Locals("user_role").(string)
-	sessionToken := generateSessionToken(req.UserID, userRole, sessionID)
-	h.DB.LogAudit(req.UserID, "", "create", "session", sessionID, workspace.FriendlyName, c.IP())
+	sessionToken, err := mintAndAdmitBearer(agentEndpoint, agentToken, sessionID, authUserID, userRole)
+	if err != nil {
+		cleanupBody, _ := json.Marshal(map[string]string{"session_id": sessionID})
+		callAgent(agentEndpoint, agentToken, "/api/destroy-session", cleanupBody)
+		return c.Status(500).JSON(fiber.Map{"error_message": "Failed to issue session bearer"})
+	}
+	h.DB.LogAudit(authUserID, "", "create", "session", sessionID, workspace.FriendlyName, c.IP())
 	metrics.SessionsCreatedTotal.Add(1)
 	return c.JSON(fiber.Map{
 		"session_id":    sessionID,
@@ -569,6 +599,14 @@ func (h *SessionHandler) GetSessionReadiness(c *fiber.Ctx) error {
 		return c.Status(404).JSON(fiber.Map{"error": "Session not found"})
 	}
 
+	// SECURITY: enforce ownership. Anyone with a known session_id was previously
+	// able to read pod_ip / phase and trigger UpdateSessionIP for arbitrary sessions.
+	authUserID, _ := c.Locals("user_id").(string)
+	authRole, _ := c.Locals("user_role").(string)
+	if authRole != "admin" && session.UserID != authUserID {
+		return c.Status(404).JSON(fiber.Map{"error": "Session not found"})
+	}
+
 	// Server sessions are immediately ready (no pod to wait for)
 	if session.SessionType == "server" {
 		return c.JSON(fiber.Map{"phase": "ready", "progress": 100, "pod_ip": session.ContainerIP})
@@ -636,10 +674,11 @@ func (h *SessionHandler) DestroySession(c *fiber.Ctx) error {
 	}
 
 	if session.AgentID != "" {
-		// Destroy via the agent
 		var endpoint, token string
 		h.DB.QueryRow("SELECT endpoint, token FROM agent WHERE id = $1", session.AgentID).Scan(&endpoint, &token)
 		if endpoint != "" {
+			// Revoke any outstanding session bearers held by the agent.
+			revokeBearer(endpoint, token, req.SessionID)
 			body, _ := json.Marshal(map[string]string{"session_id": req.SessionID})
 			destroyPath := "/api/destroy-session"
 			if session.SessionType == "server" {
@@ -650,13 +689,59 @@ func (h *SessionHandler) DestroySession(c *fiber.Ctx) error {
 			}
 		}
 	} else if session.PodName != "" {
-		// Fallback: destroy directly (legacy sessions without agent)
 		h.Agent.DestroySessionByPodName(session.PodName)
 	}
 
 	h.DB.DeleteSession(req.SessionID)
 	h.DB.LogAudit(userID, "", "destroy", "session", req.SessionID, "", c.IP())
 	return c.JSON(fiber.Map{"status": "ok"})
+}
+
+// ConnectSession mints a fresh short-lived session bearer for an existing
+// session and pushes it to the agent. Called by the frontend right before
+// opening the viewer, replacing the previous "embed a 2h JWT in the listing
+// response and pass it through the URL fragment" pattern.
+func (h *SessionHandler) ConnectSession(c *fiber.Ctx) error {
+	var req struct {
+		SessionID string `json:"session_id" validate:"required"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error_message": "Invalid body"})
+	}
+	if err := middleware.Validate.Struct(req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error_message": "session_id required"})
+	}
+	authUserID, _ := c.Locals("user_id").(string)
+	authRole, _ := c.Locals("user_role").(string)
+
+	session, err := h.DB.GetSession(req.SessionID)
+	if err != nil {
+		return c.Status(404).JSON(fiber.Map{"error_message": "Session not found"})
+	}
+	if authRole != "admin" && session.UserID != authUserID {
+		return c.Status(404).JSON(fiber.Map{"error_message": "Session not found"})
+	}
+	if session.AgentID == "" {
+		return c.Status(400).JSON(fiber.Map{"error_message": "Session has no agent"})
+	}
+
+	var agentEndpoint, agentToken, agentPublicURL string
+	h.DB.QueryRow("SELECT endpoint, token, COALESCE(public_url, '') FROM agent WHERE id = $1", session.AgentID).
+		Scan(&agentEndpoint, &agentToken, &agentPublicURL)
+	if agentEndpoint == "" {
+		return c.Status(503).JSON(fiber.Map{"error_message": "Agent not available"})
+	}
+
+	bearer, err := mintAndAdmitBearer(agentEndpoint, agentToken, session.ID, session.UserID, authRole)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error_message": "Failed to issue session bearer"})
+	}
+	return c.JSON(fiber.Map{
+		"session_id":    session.ID,
+		"agent_url":     agentPublicURL,
+		"session_token": bearer,
+		"expires_in":    300,
+	})
 }
 
 // ShadowSession creates a read-only shadow connection to an active session (admin only).
@@ -707,9 +792,11 @@ func (h *SessionHandler) ShadowSession(c *fiber.Ctx) error {
 		return c.Status(500).JSON(fiber.Map{"error": "Failed to create shadow session"})
 	}
 
-	// Generate a session token for the shadow session
 	adminRole, _ := c.Locals("user_role").(string)
-	sessionToken := generateSessionToken(adminUserID, adminRole, shadowSessionID)
+	sessionToken, err := mintAndAdmitBearer(agentEndpoint, agentToken, shadowSessionID, adminUserID, adminRole)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "Failed to issue session bearer"})
+	}
 
 	h.DB.LogAudit(adminUserID, "", "shadow", "session", req.SessionID, fmt.Sprintf("shadow_id=%s", shadowSessionID), c.IP())
 

@@ -34,6 +34,9 @@ export async function POST(request: NextRequest) {
   } else if (action === "destroy") {
     endpoint = "destroy_session";
     body.session_id = session_id;
+  } else if (action === "connect") {
+    endpoint = "session/connect";
+    body.session_id = session_id;
   } else {
     return NextResponse.json({ error: "Invalid action" }, { status: 400 });
   }

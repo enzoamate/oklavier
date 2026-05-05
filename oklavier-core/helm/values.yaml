@@ -36,6 +36,9 @@ api:
       memory: 512Mi
 
 # Database credentials (shared between CNPG + API)
+# SECURITY: do NOT use the literal string "REPLACE_ME". The chart's secrets
+# template now rejects it (and any value shorter than 16 chars). Generate one:
+#   --set database.password="$(openssl rand -base64 24 | tr -d '+/=')"
 database:
   enabled: true
   instances: 2
@@ -43,16 +46,23 @@ database:
   storageClass: ""
   name: "oklavier"
   user: "oklavier"
-  password: "REPLACE_ME"
+  password: ""
 
 # Initial admin account (created on first boot)
+# SECURITY: required and must not be "REPLACE_ME" (>= 12 chars).
+#   --set admin.password="$(openssl rand -base64 18 | tr -d '+/=')"
 admin:
   name: "Admin"
   email: "admin@oklavier.local"
-  password: "REPLACE_ME"
+  password: ""
 
-# JWT secret for API tokens
+# JWT secret for API tokens (>= 32 chars). Auto-generated if empty AND no
+# pre-existing oklavier-secrets is found in the cluster.
 jwtSecret: ""
+
+# Encryption-at-rest key, distinct from jwtSecret (>= 32 chars). Auto-generated
+# if empty. Decoupling these prevents one leak from compromising both.
+encryptionKey: ""
 
 # Internal secret for Next.js <-> Go API communication
 internalSecret: ""

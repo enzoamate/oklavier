@@ -64,6 +64,24 @@ func main() {
 	if jwtSecret == "" {
 		log.Fatal("FATAL: JWT_SECRET environment variable must be set")
 	}
+	// SECURITY: enforce minimum entropy. Anything shorter than 32 bytes is
+	// brute-forceable offline given a single signed JWT.
+	if len(jwtSecret) < 32 {
+		log.Fatal("FATAL: JWT_SECRET must be at least 32 characters (use `openssl rand -hex 32`)")
+	}
+	// SECURITY: encryption-at-rest key is now separate from JWT signing key.
+	// Reusing JWT_SECRET as the AES key collapsed two trust boundaries: any
+	// leak of the JWT secret meant decryption of all DB-encrypted credentials.
+	// Falls back to a key derived from JWT_SECRET via HKDF (with a distinct label)
+	// for backwards-compat with existing encrypted data; new deployments should
+	// set OKLAVIER_ENCRYPTION_KEY explicitly.
+	encryptionKey := os.Getenv("OKLAVIER_ENCRYPTION_KEY")
+	if encryptionKey == "" {
+		log.Println("WARN: OKLAVIER_ENCRYPTION_KEY not set; deriving from JWT_SECRET via HKDF for backwards compat. Set it explicitly to decouple encryption-at-rest from JWT signing.")
+		encryptionKey = jwtSecret
+	} else if len(encryptionKey) < 32 {
+		log.Fatal("FATAL: OKLAVIER_ENCRYPTION_KEY must be at least 32 characters")
+	}
 	listenAddr := getEnv("LISTEN_ADDR", ":8080")
 	frontendURL := getEnv("FRONTEND_URL", "http://localhost:3001")
 	kubeconfig := getEnv("KUBECONFIG", "")
@@ -80,7 +98,7 @@ func main() {
 	log.Println("Connected to PostgreSQL")
 
 	// Set encryption key for credential encryption at rest (uses JWT_SECRET)
-	database.EncryptionKey = jwtSecret
+	database.EncryptionKey = encryptionKey
 
 	// Auto-create all tables
 	migrations := []string{
@@ -407,7 +425,7 @@ func main() {
 	blacklist := auth.NewTokenBlacklist(valkeyURL)
 	appCache := cache.New(valkeyURL)
 	secureCookie := strings.HasPrefix(frontendURL, "https://")
-	authHandlers := &handlers.AuthHandlers{DB: database, RateLimiter: rateLimiter, Blacklist: blacklist}
+	authHandlers := &handlers.AuthHandlers{DB: database, RateLimiter: rateLimiter, Blacklist: blacklist, FrontendURL: frontendURL}
 
 	sessionHandler := &handlers.SessionHandler{DB: database, Agent: k8sAgent, RateLimiter: rateLimiter, Cache: appCache}
 	adminHandler := &handlers.AdminHandler{DB: database, Cache: appCache}
@@ -530,7 +548,13 @@ func main() {
 	})
 
 	api.Get("/login_settings", authHandler.LoginSettings)
-	api.Post("/authenticate", authHandler.Login)
+	// SECURITY: legacy /authenticate path removed. It used single-round salted SHA-256
+	// for password verification and issued tokens via auth.GenerateToken whose
+	// ValidateToken keyfunc did not enforce the HMAC signing method (alg-confusion).
+	// Use /api/auth/login (bcrypt + ValidateAccessToken with HMAC enforcement).
+	api.Post("/authenticate", func(c *fiber.Ctx) error {
+		return c.Status(410).JSON(fiber.Map{"error": "Endpoint removed. Use /api/auth/login."})
+	})
 
 	// Auth routes (public, rate-limited for login)
 	api.Post("/auth/login", authHandlers.Login)
@@ -647,15 +671,23 @@ func main() {
 		if time.Now().After(link.ExpiresAt) {
 			return c.Status(410).JSON(fiber.Map{"error": "Link has expired"})
 		}
-		if link.MaxUses > 0 && link.UsedCount >= link.MaxUses {
-			return c.Status(410).JSON(fiber.Map{"error": "Link has reached maximum uses"})
-		}
 
-		// Check password if required
+		// Check password BEFORE consuming a use (don't burn the use on a wrong password attempt)
 		if link.PasswordHash != "" {
 			if err := bcrypt.CompareHashAndPassword([]byte(link.PasswordHash), []byte(req.Password)); err != nil {
 				return c.Status(401).JSON(fiber.Map{"error": "Invalid password"})
 			}
+		}
+
+		// SECURITY: atomic increment+check guards against race-double-use of single-use links.
+		atomicRes, atomicErr := database.Exec(`UPDATE guest_link
+			SET used_count = used_count + 1
+			WHERE id = $1 AND (max_uses = 0 OR used_count < max_uses) AND expires_at > NOW()`, link.ID)
+		if atomicErr != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
+		}
+		if rows, _ := atomicRes.RowsAffected(); rows == 0 {
+			return c.Status(410).JSON(fiber.Map{"error": "Link has reached maximum uses"})
 		}
 
 		// Get workspace
@@ -769,14 +801,16 @@ func main() {
 				sessionID, guestUserID, workspace.ID, podResp.PodName, podResp.PodIP, agentID, expiration)
 		}
 
-		// Increment used_count
-		database.Exec(`UPDATE guest_link SET used_count = used_count + 1 WHERE id = $1`, link.ID)
+		// used_count was already atomically incremented above (race-safe)
 
 		// Get agent public URL
 		var agentPublicURL string
 		database.QueryRow("SELECT COALESCE(public_url, '') FROM agent WHERE id = $1", agentID).Scan(&agentPublicURL)
 
-		sessionToken := handlers.GenerateGuestSessionToken(guestUserID, sessionID)
+		sessionToken, tokenErr := handlers.GenerateGuestSessionBearer(agentEndpoint, agentToken, guestUserID, sessionID)
+		if tokenErr != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Failed to issue session bearer"})
+		}
 		database.LogAudit(guestUserID, "", "create", "guest_session", sessionID, "guest_link="+link.ID, c.IP())
 
 		return c.JSON(fiber.Map{
@@ -810,6 +844,7 @@ func main() {
 	authenticated.Post("/request_session", sessionHandler.RequestSession)
 	authenticated.Post("/destroy_session", sessionHandler.DestroySession)
 	authenticated.Post("/session_readiness", sessionHandler.GetSessionReadiness)
+	authenticated.Post("/session/connect", sessionHandler.ConnectSession)
 
 	// Workspace favorites
 	authenticated.Post("/favorites", func(c *fiber.Ctx) error {
@@ -1084,9 +1119,28 @@ func main() {
 		if err := c.BodyParser(&req); err != nil || req.SessionID == "" {
 			return c.Status(400).JSON(fiber.Map{"error": "session_id required"})
 		}
+		// SECURITY: bind to the calling agent. Previously, any agent token could destroy
+		// any session cluster-wide.
+		callerAgentID, _ := c.Locals("agent_id").(string)
+		if callerAgentID == "" {
+			return c.Status(401).JSON(fiber.Map{"error": "Agent identity required"})
+		}
+		// Re-derive user_id from the session row; do not trust req.UserID for audit attribution.
+		var sessionAgentID, sessionUserID string
+		_ = database.QueryRow(`SELECT agent_id, COALESCE(user_id,'') FROM workspace_session WHERE id = $1`,
+			req.SessionID).Scan(&sessionAgentID, &sessionUserID)
+		if sessionAgentID == "" {
+			// Already gone — idempotent success
+			return c.JSON(fiber.Map{"status": "ok"})
+		}
+		if sessionAgentID != callerAgentID {
+			log.Printf("[security] agent %s tried to destroy session %s owned by agent %s",
+				callerAgentID, req.SessionID, sessionAgentID)
+			return c.Status(403).JSON(fiber.Map{"error": "Session does not belong to this agent"})
+		}
 		database.DeleteSession(req.SessionID)
-		database.LogAudit(req.UserID, "", "destroy", "session", req.SessionID, "viewer", c.IP())
-		log.Printf("Agent destroyed session %s (user=%s)", req.SessionID, req.UserID)
+		database.LogAudit(sessionUserID, "", "destroy", "session", req.SessionID, "viewer", c.IP())
+		log.Printf("Agent %s destroyed session %s (user=%s)", callerAgentID, req.SessionID, sessionUserID)
 		return c.JSON(fiber.Map{"status": "ok"})
 	})
 	agentAPI.Post("/recording-uploaded", func(c *fiber.Ctx) error {
@@ -1104,19 +1158,35 @@ func main() {
 		if req.StorageType == "" {
 			req.StorageType = "s3"
 		}
-		// Find agent_id from the token
-		agentToken := c.Get("X-Agent-Token")
-		var agentID string
-		database.Get(&agentID, `SELECT id FROM agent WHERE token = $1`, agentToken)
-
+		// SECURITY: verify the session belongs to the calling agent before recording metadata.
+		// Otherwise any agent token could forge recording rows attributed to other users
+		// (audit-log poisoning + s3_key smuggling that exfils admin-side S3 creds via download).
+		callerAgentID, _ := c.Locals("agent_id").(string)
+		if callerAgentID == "" {
+			return c.Status(401).JSON(fiber.Map{"error": "Agent identity required"})
+		}
+		var sessionAgentID, sessionUserID, sessionWS string
+		err := database.QueryRow(`SELECT ws.agent_id, COALESCE(ws.user_id,''), COALESCE(w.friendly_name,'')
+			FROM workspace_session ws LEFT JOIN workspace w ON w.id = ws.workspace_id
+			WHERE ws.id = $1`, req.SessionID).Scan(&sessionAgentID, &sessionUserID, &sessionWS)
+		if err != nil || sessionAgentID == "" {
+			return c.Status(404).JSON(fiber.Map{"error": "Session not found"})
+		}
+		if sessionAgentID != callerAgentID {
+			log.Printf("[security] agent %s tried to record session %s owned by agent %s",
+				callerAgentID, req.SessionID, sessionAgentID)
+			return c.Status(403).JSON(fiber.Map{"error": "Session does not belong to this agent"})
+		}
+		// Use server-side values, not body-supplied (prevents user_id / workspace_name spoof).
 		database.Exec(`INSERT INTO session_recording (session_id, user_id, workspace_name, s3_key, file_size, storage_type, agent_id) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-			req.SessionID, req.UserID, req.WorkspaceName, req.S3Key, req.FileSize, req.StorageType, agentID)
-		log.Printf("Recording saved for session %s: storage=%s, s3_key=%s (%d bytes)", req.SessionID, req.StorageType, req.S3Key, req.FileSize)
+			req.SessionID, sessionUserID, sessionWS, req.S3Key, req.FileSize, req.StorageType, callerAgentID)
+		log.Printf("Recording saved for session %s: storage=%s (%d bytes)", req.SessionID, req.StorageType, req.FileSize)
 		return c.JSON(fiber.Map{"status": "ok"})
 	})
 
-	// OIDC group sync (called by Next.js after login — requires internal secret or auth)
-	authenticated.Post("/admin/sync-oidc-groups", func(c *fiber.Ctx) error {
+	// OIDC group sync — admin-only. Mounting on `authenticated` previously let
+	// any low-priv user POST their user_id with crafted oidc_roles to self-promote.
+	admin.Post("/sync-oidc-groups", func(c *fiber.Ctx) error {
 		var req struct {
 			UserID       string   `json:"user_id"`
 			OIDCRoles    []string `json:"oidc_roles"`

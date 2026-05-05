@@ -41,20 +41,20 @@ func (h *AgentHandler) Heartbeat(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": "Invalid body"})
 	}
 
-	// Find agent by token and update
+	// SECURITY: only allow heartbeat to update health/load metrics + version.
+	// Identifying fields (name, region, namespace) and public_url are pinned at
+	// agent creation/deploy time. Without this, a stolen agent token could
+	// rewrite public_url to attacker-controlled hosts that the core would later
+	// dial when proxying to the agent (SSRF + token leak via X-Agent-Token).
 	result, err := h.DB.Exec(`
 		UPDATE agent SET
 			status = 'connected', total_nodes = $2, total_cpu = $3, total_memory = $4,
 			active_sessions = $5, last_heartbeat = NOW(),
-			name = COALESCE(NULLIF($6, ''), name),
-			region = COALESCE(NULLIF($7, ''), region),
-			namespace = COALESCE(NULLIF($8, ''), namespace),
-			public_url = COALESCE(NULLIF($9, ''), public_url),
-			version = COALESCE(NULLIF($10, ''), version)
+			version = COALESCE(NULLIF($6, ''), version)
 		WHERE token = $1`,
 		token, payload.NodeCount, fmt.Sprintf("%d", payload.CPUTotal), fmt.Sprintf("%d GB", payload.MemoryTotalGB),
 		payload.Sessions,
-		payload.AgentName, payload.Region, payload.Namespace, payload.PublicURL, payload.Version)
+		payload.Version)
 
 	if err != nil {
 		log.Printf("Heartbeat DB error: %v", err)
@@ -68,7 +68,10 @@ func (h *AgentHandler) Heartbeat(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"status": "ok"})
 }
 
-// Admin: list agents (paginated)
+// Admin: list agents (paginated).
+// SECURITY: tokens are NEVER returned in the listing — they are bearer creds
+// that grant /api/agent/* access. Use RevealAgentToken on a per-agent basis,
+// guarded by re-auth + audit, when an admin needs to copy the token.
 func (h *AgentHandler) ListAgents(c *fiber.Ctx) error {
 	var req struct {
 		Page    int    `json:"page"`
@@ -77,8 +80,8 @@ func (h *AgentHandler) ListAgents(c *fiber.Ctx) error {
 	}
 	c.BodyParser(&req)
 
-	if req.PerPage == 0 {
-		req.PerPage = 1000
+	if req.PerPage == 0 || req.PerPage > 200 {
+		req.PerPage = 100
 	}
 	if req.Page == 0 {
 		req.Page = 1
@@ -93,10 +96,10 @@ func (h *AgentHandler) ListAgents(c *fiber.Ctx) error {
 		h.DB.Get(&total, `SELECT COUNT(*) FROM agent`)
 	}
 
-	// Query with pagination
+	// Query with pagination — note: NO `token` column in the select list.
 	var query string
 	var args []interface{}
-	baseSelect := `SELECT id, name, token, region, namespace, COALESCE(endpoint,'') as endpoint, COALESCE(public_url,'') as public_url, status,
+	baseSelect := `SELECT id, name, region, namespace, COALESCE(endpoint,'') as endpoint, COALESCE(public_url,'') as public_url, status,
 		COALESCE(total_nodes,0) as total_nodes, COALESCE(total_cpu,'0') as total_cpu, COALESCE(total_memory,'0') as total_memory,
 		COALESCE(active_sessions,0) as active_sessions, COALESCE(version,'') as version, last_heartbeat, created_at FROM agent`
 
@@ -166,6 +169,25 @@ func (h *AgentHandler) DeleteAgent(c *fiber.Ctx) error {
 		log.Printf("DeleteAgent error: %v", err)
 	}
 	return c.JSON(fiber.Map{"ok": true})
+}
+
+// Admin: reveal a single agent's token (audited, separate from the listing).
+// Mount only on the admin group with explicit AdminRequired().
+func (h *AgentHandler) RevealAgentToken(c *fiber.Ctx) error {
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := c.BodyParser(&req); err != nil || req.ID == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "id required"})
+	}
+	var token, name string
+	if err := h.DB.QueryRow(`SELECT token, name FROM agent WHERE id = $1`, req.ID).Scan(&token, &name); err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "Agent not found"})
+	}
+	adminID, _ := c.Locals("user_id").(string)
+	adminEmail, _ := c.Locals("user_email").(string)
+	h.DB.LogAudit(adminID, adminEmail, "reveal_token", "agent", req.ID, name, c.IP())
+	return c.JSON(fiber.Map{"id": req.ID, "name": name, "token": token})
 }
 
 // Admin: generate deploy manifest for an agent

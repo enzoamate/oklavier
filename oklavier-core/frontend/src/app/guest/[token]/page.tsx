@@ -70,9 +70,24 @@ function GuestPage() {
         return;
       }
 
-      // Redirect to the agent viewer
+      // Redirect to the agent viewer.
+      // SECURITY: validate `agent_url` is a real https:// URL. Without this,
+      // a server-side bug (or a malicious admin) returning `//evil.com` or
+      // `https://evil.com#` would navigate the browser to attacker.com WITH
+      // the live session_token in the URL, leaking the credential.
       if (data.agent_url && data.session_id) {
-        const viewerUrl = `${data.agent_url}/viewer/${data.session_id}?token=${data.session_token}`;
+        let viewerUrl: string;
+        try {
+          const base = new URL(data.agent_url);
+          if (base.protocol !== "https:") throw new Error("non-https agent_url");
+          base.pathname = `${base.pathname.replace(/\/+$/, "")}/viewer/${encodeURIComponent(data.session_id)}`;
+          base.search = `?token=${encodeURIComponent(data.session_token)}`;
+          viewerUrl = base.toString();
+        } catch {
+          setError("Invalid agent URL");
+          setLaunching(false);
+          return;
+        }
         window.location.href = viewerUrl;
       } else {
         setError("No agent available");

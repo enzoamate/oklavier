@@ -3,10 +3,14 @@ package handlers
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
+	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -16,6 +20,82 @@ import (
 	"oklavier-api/internal/auth"
 	"oklavier-api/internal/db"
 )
+
+// safeOutboundClient returns an *http.Client whose dialer rejects connections
+// to loopback / link-local / private / multicast / unspecified IPs. It mitigates
+// SSRF (e.g. attacker-controlled OIDC issuer URL pointing at 169.254.169.254
+// for cloud metadata) and DNS rebinding (re-resolution per redirect cannot
+// land on a private IP). Hostnames are resolved at dial time and every
+// returned address is checked.
+func safeOutboundClient(timeout time.Duration) *http.Client {
+	dialer := &net.Dialer{Timeout: timeout, KeepAlive: 30 * time.Second}
+	return &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				host, port, err := net.SplitHostPort(addr)
+				if err != nil {
+					return nil, err
+				}
+				ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+				if err != nil {
+					return nil, err
+				}
+				for _, ip := range ips {
+					if isPrivateOrSpecialIP(ip.IP) {
+						return nil, fmt.Errorf("blocked request to private/special IP %s", ip.IP)
+					}
+				}
+				// Use the first acceptable IP explicitly so the dial cannot
+				// re-resolve to a different address.
+				return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
+			},
+		},
+	}
+}
+
+func isPrivateOrSpecialIP(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsMulticast() || ip.IsUnspecified() || ip.IsPrivate() {
+		return true
+	}
+	// Cloud metadata, CGNAT, broadcast.
+	for _, cidr := range []string{
+		"169.254.0.0/16", // link-local incl. AWS/GCP/Azure metadata
+		"100.64.0.0/10",  // CGNAT
+		"::ffff:169.254.169.254/128",
+	} {
+		_, n, _ := net.ParseCIDR(cidr)
+		if n != nil && n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// isSafeIssuerURL validates an OIDC issuer URL: must be https, must have a
+// host, must not point at a private/special IP literal. (Hostnames are
+// re-checked at dial time by safeOutboundClient.)
+func isSafeIssuerURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return err
+	}
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return fmt.Errorf("issuer must be http(s)")
+	}
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("issuer must have a host")
+	}
+	if ip := net.ParseIP(host); ip != nil && isPrivateOrSpecialIP(ip) {
+		return fmt.Errorf("issuer host is a private/special IP")
+	}
+	return nil
+}
 
 type OIDCHandler struct {
 	DB           *db.DB
@@ -71,21 +151,36 @@ func (h *OIDCHandler) Authorize(c *fiber.Ctx) error {
 		return c.Status(404).JSON(fiber.Map{"error": "Provider not found"})
 	}
 
-	// Generate state parameter (CSRF protection)
+	// Generate state + nonce parameters (CSRF + ID-token replay protection).
+	// SECURITY: previously no nonce was passed at all; without it, ID tokens
+	// can be replayed across login attempts on IdPs that don't otherwise bind them.
 	_, stateToken, _ := auth.GenerateSessionToken()
+	if len(stateToken) < 32 {
+		return c.Status(500).JSON(fiber.Map{"error": "Failed to generate state"})
+	}
+	state := stateToken[:32]
+	nonce := oidcGenerateID()
 
-	// Store state in a short-lived cookie
 	c.Cookie(&fiber.Cookie{
 		Name:     "oklavier_oidc_state",
-		Value:    stateToken[:32], // Use first 32 chars
+		Value:    state,
 		Path:     "/",
 		MaxAge:   300, // 5 minutes
 		HTTPOnly: true,
 		Secure:   h.SecureCookie,
 		SameSite: "Lax",
 	})
+	c.Cookie(&fiber.Cookie{
+		Name:     "oklavier_oidc_nonce",
+		Value:    nonce,
+		Path:     "/",
+		MaxAge:   300,
+		HTTPOnly: true,
+		Secure:   h.SecureCookie,
+		SameSite: "Lax",
+	})
 
-	authURL := cfg.OAuth2Config.AuthCodeURL(stateToken[:32])
+	authURL := cfg.OAuth2Config.AuthCodeURL(state, oidc.Nonce(nonce))
 	return c.Redirect(authURL, 302)
 }
 
@@ -95,15 +190,25 @@ func (h *OIDCHandler) Callback(c *fiber.Ctx) error {
 	code := c.Query("code")
 	state := c.Query("state")
 
-	// Verify state (CSRF)
+	// Verify state (CSRF) — constant-time compare so a leaked timing channel
+	// cannot help an attacker craft a matching state.
 	storedState := c.Cookies("oklavier_oidc_state")
-	if storedState == "" || storedState != state {
+	if storedState == "" || subtle.ConstantTimeCompare([]byte(storedState), []byte(state)) != 1 {
 		return c.Status(400).JSON(fiber.Map{"error": "Invalid state parameter"})
 	}
 
 	// Clear state cookie
 	c.Cookie(&fiber.Cookie{
 		Name:   "oklavier_oidc_state",
+		Value:  "",
+		Path:   "/",
+		MaxAge: -1,
+	})
+
+	// Read & clear the nonce cookie up-front so we can verify it after token verify.
+	storedNonce := c.Cookies("oklavier_oidc_nonce")
+	c.Cookie(&fiber.Cookie{
+		Name:   "oklavier_oidc_nonce",
 		Value:  "",
 		Path:   "/",
 		MaxAge: -1,
@@ -133,6 +238,12 @@ func (h *OIDCHandler) Callback(c *fiber.Ctx) error {
 	if err != nil {
 		log.Printf("OIDC token verification error: %v", err)
 		return c.Status(400).JSON(fiber.Map{"error": "Invalid ID token"})
+	}
+
+	// Verify nonce binding (CSRF + replay protection).
+	if storedNonce == "" || idToken.Nonce == "" ||
+		subtle.ConstantTimeCompare([]byte(storedNonce), []byte(idToken.Nonce)) != 1 {
+		return c.Status(400).JSON(fiber.Map{"error": "Invalid nonce"})
 	}
 
 	// Extract claims
@@ -220,10 +331,31 @@ func (h *OIDCHandler) Callback(c *fiber.Ctx) error {
 	// Audit
 	h.DB.LogAudit(userID, email, "oidc_login", "auth", providerID, cfg.Name, c.IP())
 
-	// Redirect to frontend callback with tokens in URL fragment
-	redirectURL := fmt.Sprintf("%s/auth/callback#access_token=%s&refresh_token=%s",
-		h.FrontendURL, accessToken, refreshToken)
-	return c.Redirect(redirectURL, 302)
+	// SECURITY: deliver tokens via short-lived httpOnly cookies + a one-time
+	// pickup code, NOT in the URL fragment. Fragments don't go into HTTP logs
+	// but they DO go into browser history, password managers, third-party JS
+	// on the callback page, and `window.opener` if a popup was used. The
+	// long-lived (7-day) refresh token in particular must never sit in URL state.
+	c.Cookie(&fiber.Cookie{
+		Name:     "oklavier_access_token",
+		Value:    accessToken,
+		Path:     "/",
+		MaxAge:   int(auth.AccessTokenTTL.Seconds()),
+		HTTPOnly: true,
+		Secure:   h.SecureCookie,
+		SameSite: "Lax",
+	})
+	c.Cookie(&fiber.Cookie{
+		Name:     "oklavier_refresh_token",
+		Value:    refreshToken,
+		Path:     "/",
+		MaxAge:   int(auth.RefreshTokenTTL.Seconds()),
+		HTTPOnly: true,
+		Secure:   h.SecureCookie,
+		SameSite: "Lax",
+	})
+	// The frontend callback reads the cookies via /api/auth/me and then clears them.
+	return c.Redirect(h.FrontendURL+"/auth/callback?oidc=ok", 302)
 }
 
 func (h *OIDCHandler) getProviderConfig(providerID string, c *fiber.Ctx) (*oidcProviderConfig, error) {
@@ -244,8 +376,13 @@ func (h *OIDCHandler) getProviderConfig(providerID string, c *fiber.Ctx) (*oidcP
 	clientSecret := cfg["client_secret"]
 	issuerURL := cfg["issuer"]
 
-	// Initialize OIDC provider
-	ctx := context.Background()
+	// SECURITY: validate the issuer URL (admin-controlled but should still be
+	// constrained) and use an HTTP client that refuses connections to private
+	// / link-local / cloud-metadata IPs to prevent SSRF + DNS rebinding.
+	if err := isSafeIssuerURL(issuerURL); err != nil {
+		return nil, fmt.Errorf("unsafe issuer URL: %w", err)
+	}
+	ctx := oidc.ClientContext(context.Background(), safeOutboundClient(10*time.Second))
 	provider, err := oidc.NewProvider(ctx, issuerURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize OIDC provider: %w", err)
@@ -275,6 +412,8 @@ func (h *OIDCHandler) getProviderConfig(providerID string, c *fiber.Ctx) (*oidcP
 
 func oidcGenerateID() string {
 	b := make([]byte, 16)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("crypto/rand failure: %v", err))
+	}
 	return hex.EncodeToString(b)
 }

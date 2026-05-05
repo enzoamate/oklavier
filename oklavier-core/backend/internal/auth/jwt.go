@@ -39,7 +39,13 @@ func GenerateToken(sessionTokenID string, authorizations []int, expiryHours int)
 }
 
 func ValidateToken(tokenString string) (*Claims, error) {
-	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
+	// SECURITY: enforce HMAC. Without this, an attacker could forge a token
+	// using `alg: none` or RSA public-key confusion since the keyfunc returned
+	// the raw secret regardless of the declared algorithm.
+	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(t *jwt.Token) (interface{}, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+		}
 		return jwtSecret, nil
 	})
 	if err != nil {
@@ -166,8 +172,13 @@ func HashPasswordSHA256(password, salt string) string {
 	return fmt.Sprintf("%x", h)
 }
 
+// GenerateRandomToken returns 32 cryptographically-random bytes hex-encoded.
+// Panics on a crypto/rand failure rather than returning an all-zero token,
+// which would be silently guessable.
 func GenerateRandomToken() string {
 	b := make([]byte, 32)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("crypto/rand failure: %v", err))
+	}
 	return hex.EncodeToString(b)
 }

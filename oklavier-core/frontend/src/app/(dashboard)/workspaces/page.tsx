@@ -209,13 +209,28 @@ export default function WorkspacesPage() {
       invalidate("/api/workspaces");
       invalidate("/api/sessions");
 
-      // Redirect to agent domain with auth token in URL fragment (#token=)
-      const agentUrl = data.agent_url;
+      // Redirect to agent domain with auth token in URL fragment (#token=).
+      // SECURITY: previously concatenated as `https://${agentUrl}/...` without
+      // any check — a server response of `agentUrl: "evil.com"` or with
+      // a leading `//` would land the browser on attacker.com and the
+      // fragment would still travel through history/extensions.
+      const agentUrl: string | undefined = data.agent_url;
       const sessionPath = "sessions";
-      const tokenFragment = data.session_token ? `#token=${data.session_token}` : "";
-      const url = agentUrl
-        ? `https://${agentUrl}/${sessionPath}/${data.session_id}${tokenFragment}`
-        : `/${sessionPath}/${data.session_id}${tokenFragment}`;
+      const tokenFragment = data.session_token ? `#token=${encodeURIComponent(data.session_token)}` : "";
+      let url: string;
+      if (agentUrl) {
+        const safeHost = /^[a-z0-9.\-]+(:\d{1,5})?$/i.test(agentUrl) ? agentUrl : null;
+        if (!safeHost) {
+          setLaunchPhase("idle");
+          setSelectedImage(null);
+          setToast(t("workspace.session_error"));
+          setTimeout(() => setToast(null), 4000);
+          return;
+        }
+        url = `https://${safeHost}/${sessionPath}/${encodeURIComponent(data.session_id)}${tokenFragment}`;
+      } else {
+        url = `/${sessionPath}/${encodeURIComponent(data.session_id)}${tokenFragment}`;
+      }
       setTimeout(() => {
         if (openIn === "new-tab") {
           window.open(url, "_blank");
@@ -258,14 +273,34 @@ export default function WorkspacesPage() {
     setLaunchPhase("resume");
   }
 
-  function handleResumeConfirm() {
+  async function handleResumeConfirm() {
     if (!resumeSession) return;
+    // Mint a fresh single-purpose bearer right before opening the viewer.
+    let bearer = "";
+    let agentUrl = resumeSession.agent_vnc_url;
+    try {
+      const r = await authFetch("/api/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "connect", session_id: resumeSession.session_id }),
+      });
+      if (!r.ok) throw new Error(`connect ${r.status}`);
+      const j = await r.json();
+      bearer = j.session_token || "";
+      agentUrl = j.agent_url || agentUrl;
+    } catch {
+      setToast(t("workspace.session_error"));
+      setTimeout(() => setToast(null), 4000);
+      setLaunchPhase("idle");
+      setResumeSession(null);
+      return;
+    }
     const sessionPath = "sessions";
-    const agentUrl = resumeSession.agent_vnc_url;
-    const tokenFragment = (resumeSession as any).session_token ? `#token=${(resumeSession as any).session_token}` : "";
-    const url = agentUrl
-      ? `https://${agentUrl}/${sessionPath}/${resumeSession.session_id}${tokenFragment}`
-      : `/${sessionPath}/${resumeSession.session_id}${tokenFragment}`;
+    const tokenFragment = bearer ? `#token=${encodeURIComponent(bearer)}` : "";
+    const safeHost = agentUrl && /^[a-z0-9.\-]+(:\d{1,5})?$/i.test(agentUrl) ? agentUrl : null;
+    const url = safeHost
+      ? `https://${safeHost}/${sessionPath}/${encodeURIComponent(resumeSession.session_id)}${tokenFragment}`
+      : `/${sessionPath}/${encodeURIComponent(resumeSession.session_id)}${tokenFragment}`;
     if (openIn === "new-tab") {
       window.open(url, "_blank");
     } else if (openIn === "new-window") {

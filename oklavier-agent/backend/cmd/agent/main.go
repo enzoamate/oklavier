@@ -3,9 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/redis/go-redis/v9"
@@ -13,6 +13,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,6 +31,88 @@ import (
 
 var agentLogBuffer []string
 var agentLogMu sync.Mutex
+
+// uuidRe matches the canonical UUID form produced by uuid.New().String().
+var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// sessionBearer is a session-scoped credential that replaces the previous
+// long-lived (2-hour) JWT carried in `#fragment` / `?token=` between the
+// frontend and the agent. The core mints it on session creation, pushes it
+// to the agent server-to-server (`POST /api/admit-bearer`, X-Agent-Token),
+// and returns it to the browser. The browser presents it on the WebSocket
+// upgrade and on viewer-side fetches (destroy/settings/screenshot).
+//
+// Compared to the previous JWT-in-fragment design:
+//   - Random opaque value (not a JWT) — cannot be forged offline.
+//   - Generated and bound to a single session by the core; the agent only
+//     accepts bearers explicitly admitted for sessions it serves.
+//   - Server-side revocation: deleting the session removes the bearer.
+//   - Bounded TTL (30 min) instead of the JWT's 2 h — and revocable.
+//   - Agent restart wipes all bearers (fail closed).
+type sessionBearer struct {
+	sessionID string
+	userID    string
+	role      string
+	expiresAt time.Time
+}
+
+type ticketStore struct {
+	mu      sync.Mutex
+	tickets map[string]sessionBearer
+}
+
+func newTicketStore() *ticketStore { return &ticketStore{tickets: map[string]sessionBearer{}} }
+
+// Admit registers a bearer minted by the core for a specific session. The
+// caller must be authenticated as the core (X-Agent-Token).
+func (s *ticketStore) Admit(bearer, sessionID, userID, role string, ttl time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	for k, v := range s.tickets {
+		if now.After(v.expiresAt) {
+			delete(s.tickets, k)
+		}
+	}
+	if ttl <= 0 || ttl > 30*time.Minute {
+		ttl = 30 * time.Minute
+	}
+	s.tickets[bearer] = sessionBearer{sessionID: sessionID, userID: userID, role: role, expiresAt: now.Add(ttl)}
+}
+
+// Validate checks a bearer against an expected session id WITHOUT consuming it.
+// The bearer is multi-use within its TTL — necessary because the viewer reuses
+// it for destroy/settings/screenshot fetches as well as the WS upgrade.
+func (s *ticketStore) Validate(bearer, sessionID string) (string, string, bool) {
+	if bearer == "" {
+		return "", "", false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.tickets[bearer]
+	if !ok {
+		return "", "", false
+	}
+	if time.Now().After(t.expiresAt) {
+		delete(s.tickets, bearer)
+		return "", "", false
+	}
+	if t.sessionID != sessionID {
+		return "", "", false
+	}
+	return t.userID, t.role, true
+}
+
+// Revoke removes all bearers for a session (called on session destroy).
+func (s *ticketStore) Revoke(sessionID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for k, v := range s.tickets {
+		if v.sessionID == sessionID {
+			delete(s.tickets, k)
+		}
+	}
+}
 
 type agentLogWriter struct{}
 
@@ -151,6 +235,15 @@ func main() {
 		frontendURL = controlPlane // fallback
 	}
 	jwtSecret := os.Getenv("JWT_SECRET")
+	// SECURITY: previously, an empty JWT_SECRET caused requireSessionAuth to
+	// silently call c.Next() — turning the agent into a wide-open service.
+	// Match the core's behavior and refuse to start without a strong secret.
+	if jwtSecret == "" {
+		log.Fatal("FATAL: JWT_SECRET environment variable must be set on the agent (must match the core's JWT_SECRET)")
+	}
+	if len(jwtSecret) < 32 {
+		log.Fatal("FATAL: JWT_SECRET must be at least 32 characters")
+	}
 	guacdAddr := os.Getenv("GUACD_ADDRESS")
 	if guacdAddr == "" {
 		guacdAddr = "guacd:4822"
@@ -210,7 +303,13 @@ func main() {
 		ServerHeader: "oklavier-agent",
 		BodyLimit:    10 * 1024 * 1024, // 10MB max
 	})
-	app.Use(logger.New(logger.Config{Format: "${time} | ${status} | ${latency} | ${method} | ${path}\n"}))
+	// SECURITY: ${path} in Fiber v2 includes the query string, which leaks
+	// session JWT tokens passed via `?token=` (WebSocket upgrades). Use
+	// ${url} stripped via a custom format + ${route} so logs identify the
+	// matched route without echoing user-supplied query params.
+	app.Use(logger.New(logger.Config{
+		Format: "${time} | ${status} | ${latency} | ${method} | ${route}\n",
+	}))
 	// CORS: allow only the frontend URL and the agent's own domain
 	allowedOrigins := frontendURL
 	if publicURL != "" {
@@ -223,58 +322,77 @@ func main() {
 		AllowCredentials: false,
 	}))
 
-	// JWT session auth — verifies token from #token= fragment (passed as cookie or WS query param)
-	verifySessionJWT := func(tokenStr, sessionID string) (userID string, role string, ok bool) {
-		if jwtSecret == "" || tokenStr == "" {
-			return "", "", false
-		}
-		token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
-			if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, fmt.Errorf("unexpected signing method")
-			}
-			return []byte(jwtSecret), nil
-		})
-		if err != nil || !token.Valid {
-			return "", "", false
-		}
-		claims, ok := token.Claims.(jwt.MapClaims)
-		if !ok {
-			return "", "", false
-		}
-		// Verify session_id matches (prevent token reuse for other sessions)
-		if sid, _ := claims["session_id"].(string); sid != sessionID {
-			return "", "", false
-		}
-		uid, _ := claims["user_id"].(string)
-		r, _ := claims["role"].(string)
-		return uid, r, true
-	}
+	// Bearer store: bearers are minted by the core and admitted via
+	// /api/admit-bearer (X-Agent-Token). The browser only ever sees an
+	// opaque random value (not a JWT). Wiped on agent restart.
+	wsTickets := newTicketStore()
 
-	// Middleware: require valid session JWT (from Authorization header or query param)
 	requireSessionAuth := func(c *fiber.Ctx) error {
-		if jwtSecret == "" {
-			return c.Next() // No JWT_SECRET configured, skip auth (dev mode)
-		}
 		sessionID := c.Params("sessionId")
-		// Try Authorization: Bearer <token> header first
-		tokenStr := ""
+		bearer := ""
 		if auth := c.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
-			tokenStr = strings.TrimPrefix(auth, "Bearer ")
+			bearer = strings.TrimPrefix(auth, "Bearer ")
 		}
-		if tokenStr == "" {
-			tokenStr = c.Query("token") // fallback for WebSocket upgrades
+		if bearer == "" {
+			bearer = c.Query("token")
 		}
-		if tokenStr == "" {
+		if bearer == "" {
 			return c.Status(401).JSON(fiber.Map{"error": "Authentication required"})
 		}
-		userID, role, valid := verifySessionJWT(tokenStr, sessionID)
+		userID, role, valid := wsTickets.Validate(bearer, sessionID)
 		if !valid {
-			return c.Status(401).JSON(fiber.Map{"error": "Invalid or expired token"})
+			return c.Status(401).JSON(fiber.Map{"error": "Invalid or expired bearer"})
 		}
 		c.Locals("user_id", userID)
 		c.Locals("user_role", role)
 		return c.Next()
 	}
+
+	// (wsTickets declared above for requireSessionAuth)
+
+	app.Post("/api/admit-bearer", func(c *fiber.Ctx) error {
+		token := c.Get("X-Agent-Token")
+		if subtle.ConstantTimeCompare([]byte(token), []byte(agentToken)) != 1 {
+			return c.Status(401).JSON(fiber.Map{"error": "Invalid agent token"})
+		}
+		var req struct {
+			Bearer     string `json:"bearer"`
+			SessionID  string `json:"session_id"`
+			UserID     string `json:"user_id"`
+			Role       string `json:"role"`
+			TTLSeconds int    `json:"ttl_seconds"`
+		}
+		if err := c.BodyParser(&req); err != nil || req.Bearer == "" || req.SessionID == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "bearer + session_id required"})
+		}
+		// Validate bearer format (must be at least 32 bytes of entropy, hex/base64).
+		if len(req.Bearer) < 32 {
+			return c.Status(400).JSON(fiber.Map{"error": "bearer too short"})
+		}
+		ttl := time.Duration(req.TTLSeconds) * time.Second
+		if ttl == 0 {
+			ttl = 5 * time.Minute
+		}
+		wsTickets.Admit(req.Bearer, req.SessionID, req.UserID, req.Role, ttl)
+		return c.JSON(fiber.Map{"ok": true})
+	})
+
+	// POST /api/revoke-bearer — server-to-server endpoint used by the core
+	// when a session is destroyed; revokes all bearers for that session.
+	app.Post("/api/revoke-bearer", func(c *fiber.Ctx) error {
+		token := c.Get("X-Agent-Token")
+		if subtle.ConstantTimeCompare([]byte(token), []byte(agentToken)) != 1 {
+			return c.Status(401).JSON(fiber.Map{"error": "Invalid agent token"})
+		}
+		var req struct {
+			SessionID string `json:"session_id"`
+		}
+		if err := c.BodyParser(&req); err != nil || req.SessionID == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "session_id required"})
+		}
+		wsTickets.Revoke(req.SessionID)
+		return c.JSON(fiber.Map{"ok": true})
+	})
 
 	// Health check (no auth needed)
 	app.Get("/api/health", func(c *fiber.Ctx) error {
@@ -374,23 +492,44 @@ func main() {
 	})
 
 	// Guacamole WebSocket tunnel (browser guacamole-common-js ↔ guacd)
+	// SECURITY: validate Origin so a cross-origin attacker page cannot open
+	// `wss://agent.example/guac-ws/<id>?token=<stolen>` (Cross-Site WebSocket
+	// Hijacking). CORS does not apply to WebSocket upgrades.
+	allowedWSOrigins := map[string]bool{}
+	if frontendURL != "" {
+		allowedWSOrigins[strings.TrimRight(frontendURL, "/")] = true
+	}
+	if publicURL != "" {
+		allowedWSOrigins["https://"+publicURL] = true
+	}
 	app.Use("/guac-ws", func(c *fiber.Ctx) error {
-		if websocket.IsWebSocketUpgrade(c) {
-			return c.Next()
+		if !websocket.IsWebSocketUpgrade(c) {
+			return fiber.ErrUpgradeRequired
 		}
-		return fiber.ErrUpgradeRequired
+		origin := strings.TrimRight(c.Get("Origin"), "/")
+		if origin == "" || !allowedWSOrigins[origin] {
+			log.Printf("[GuacWS] rejected upgrade from disallowed origin %q", origin)
+			return c.Status(403).SendString("origin not allowed")
+		}
+		return c.Next()
 	})
 	app.Get("/guac-ws/:sessionId", websocket.New(func(ws *websocket.Conn) {
 		sessionID := ws.Params("sessionId")
-		// Verify JWT from query param (WebSocket can't set Authorization header)
-		tokenStr := ws.Query("token")
-		if jwtSecret != "" {
-			_, _, valid := verifySessionJWT(tokenStr, sessionID)
-			if !valid {
-				log.Printf("[GuacWS] Unauthorized WebSocket for session %s", sessionID)
-				ws.Close()
-				return
-			}
+		// SECURITY: prefer single-use ticket (`?ticket=`); fall back to legacy
+		// `?token=<JWT>` only for backwards-compat with older viewer pages
+		// served before this commit. The ticket path keeps the long-lived
+		// JWT out of the WS URL (and therefore out of access logs / history).
+		// SECURITY: validate the bearer issued by the core (admitted via
+		// /api/admit-bearer S2S). No JWT path here anymore — the core no
+		// longer mints a 2-hour JWT for the browser.
+		var valid bool
+		if t := ws.Query("ticket"); t != "" {
+			_, _, valid = wsTickets.Validate(t, sessionID)
+		}
+		if !valid {
+			log.Printf("[GuacWS] Unauthorized WebSocket for session %s", sessionID)
+			ws.Close()
+			return
 		}
 		clientW, _ := strconv.Atoi(ws.Query("w"))
 		clientH, _ := strconv.Atoi(ws.Query("h"))
@@ -436,11 +575,24 @@ func main() {
 	// Download local recording (requires agent token auth)
 	app.Get("/api/recordings/:sessionId/download", func(c *fiber.Ctx) error {
 		token := c.Get("X-Agent-Token")
-		if token != agentToken {
+		// SECURITY: constant-time compare on the agent token to avoid leaking
+		// matching prefix length via timing.
+		if subtle.ConstantTimeCompare([]byte(token), []byte(agentToken)) != 1 {
 			return c.Status(401).JSON(fiber.Map{"error": "Invalid agent token"})
 		}
 		sessionID := c.Params("sessionId")
-		filePath := "/tmp/guac-recordings/" + sessionID
+		// SECURITY: validate that sessionID is a UUID-shaped opaque token —
+		// previously, a session id like `..%2f..%2fetc%2fpasswd` resolved to
+		// any file the agent could read.
+		if !uuidRe.MatchString(sessionID) {
+			return c.Status(400).JSON(fiber.Map{"error": "Invalid session id"})
+		}
+		const recBase = "/tmp/guac-recordings/"
+		filePath := recBase + sessionID
+		// Defense in depth — check the canonical path is inside recBase.
+		if abs, _ := filepath.Abs(filePath); !strings.HasPrefix(abs+string(os.PathSeparator), recBase) && abs != filePath {
+			return c.Status(400).JSON(fiber.Map{"error": "Invalid path"})
+		}
 		if _, err := os.Stat(filePath); err != nil {
 			return c.Status(404).JSON(fiber.Map{"error": "Recording not found"})
 		}
@@ -451,7 +603,7 @@ func main() {
 	// List local recordings (requires agent token auth)
 	app.Get("/api/recordings", func(c *fiber.Ctx) error {
 		token := c.Get("X-Agent-Token")
-		if token != agentToken {
+		if subtle.ConstantTimeCompare([]byte(token), []byte(agentToken)) != 1 {
 			return c.Status(401).JSON(fiber.Map{"error": "Invalid agent token"})
 		}
 		entries, err := os.ReadDir("/tmp/guac-recordings")
@@ -477,7 +629,7 @@ func main() {
 	// Auth middleware - verify agent token
 	app.Use("/api", func(c *fiber.Ctx) error {
 		token := c.Get("X-Agent-Token")
-		if token != agentToken {
+		if subtle.ConstantTimeCompare([]byte(token), []byte(agentToken)) != 1 {
 			return c.Status(401).JSON(fiber.Map{"error": "Invalid agent token"})
 		}
 		return c.Next()

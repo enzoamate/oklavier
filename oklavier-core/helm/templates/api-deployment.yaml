@@ -74,6 +74,14 @@ spec:
                 secretKeyRef:
                   name: oklavier-secrets
                   key: internal-secret
+            # SECURITY: encryption-at-rest key separated from JWT_SECRET so a
+            # leak of one doesn't compromise the other. Falls back to JWT_SECRET
+            # for backwards-compat (logged as a WARN by the API at startup).
+            - name: OKLAVIER_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: oklavier-secrets
+                  key: encryption-key
             - name: VALKEY_URL
               value: "oklavier-valkey:6379"
           resources:

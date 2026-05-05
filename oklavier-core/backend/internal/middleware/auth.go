@@ -10,14 +10,18 @@ import (
 	"oklavier-api/internal/auth"
 )
 
-// AuthRequired validates requests by checking:
-// 1. Bearer JWT access token (primary)
-// 2. Basic Auth (for direct API access / automation)
+// AuthRequired validates requests by checking the Bearer JWT access token.
+//
+// SECURITY: Basic Auth was removed from this path. Browsers cache Basic
+// credentials and replay them automatically, opening CSRF surface on every
+// authenticated route. Basic Auth also bypassed banned/locked_until checks.
+// Use AutomationAuthRequired (separate group) if Basic Auth is needed for
+// API automation; that path enforces the ban/lock checks.
 func AuthRequired(db *sqlx.DB, blacklist *auth.TokenBlacklist) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		authHeader := c.Get("Authorization")
 
-		// 1. Bearer JWT
+		// Bearer JWT only.
 		if strings.HasPrefix(authHeader, "Bearer ") {
 			tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
 			claims, err := auth.ValidateAccessToken(tokenStr)
@@ -33,18 +37,27 @@ func AuthRequired(db *sqlx.DB, blacklist *auth.TokenBlacklist) fiber.Handler {
 			}
 		}
 
-		// 2. Basic Auth
-		if strings.HasPrefix(authHeader, "Basic ") {
-			user, err := validateBasicAuth(db, authHeader)
-			if err == nil {
-				c.Locals("user_id", user.ID)
-				c.Locals("user_email", user.Email)
-				c.Locals("user_role", user.Role)
-				return c.Next()
-			}
-		}
-
 		return c.Status(401).JSON(fiber.Map{"error": "Not authenticated"})
+	}
+}
+
+// AutomationAuthRequired allows Basic Auth for API automation. Mount this
+// only on a dedicated /api/automation/* group, not on browser-facing routes.
+// It enforces banned / locked_until and is suitable for server-to-server clients.
+func AutomationAuthRequired(db *sqlx.DB) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		authHeader := c.Get("Authorization")
+		if !strings.HasPrefix(authHeader, "Basic ") {
+			return c.Status(401).JSON(fiber.Map{"error": "Basic auth required"})
+		}
+		user, err := validateBasicAuth(db, authHeader)
+		if err != nil {
+			return c.Status(401).JSON(fiber.Map{"error": "Not authenticated"})
+		}
+		c.Locals("user_id", user.ID)
+		c.Locals("user_email", user.Email)
+		c.Locals("user_role", user.Role)
+		return c.Next()
 	}
 }
 
@@ -82,7 +95,9 @@ type sessionUser struct {
 	Role  string `db:"role"`
 }
 
-// validateBasicAuth checks email:password against account tables
+// validateBasicAuth checks email:password against account tables.
+// SECURITY: enforces banned + locked_until on the basic-auth path; without these,
+// banned users retained API access via Authorization: Basic ...
 func validateBasicAuth(db *sqlx.DB, authHeader string) (*sessionUser, error) {
 	encoded := strings.TrimPrefix(authHeader, "Basic ")
 	decoded, err := base64.StdEncoding.DecodeString(encoded)
@@ -102,6 +117,8 @@ func validateBasicAuth(db *sqlx.DB, authHeader string) (*sessionUser, error) {
 		FROM "user" u
 		JOIN "account" a ON a."userId" = u.id AND a."providerId" = 'credential'
 		WHERE u.email = $1
+		  AND COALESCE(u.banned, false) = false
+		  AND (u."banExpires" IS NULL OR u."banExpires" < NOW())
 	`, email).Scan(&user.ID, &user.Email, &user.Role, &hashedPassword)
 	if err != nil {
 		return nil, err

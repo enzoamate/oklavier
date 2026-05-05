@@ -20,6 +20,12 @@ type AuthHandlers struct {
 	DB          *db.DB
 	RateLimiter *auth.RateLimiter
 	Blacklist   *auth.TokenBlacklist
+	// FrontendURL is the canonical base URL of the frontend (e.g.
+	// "https://oklavier.example.com"). Used for outbound links such as
+	// password-reset emails. MUST come from server-side configuration —
+	// previously, password-reset URLs were built from the request Origin /
+	// Referer header, allowing an attacker to phish reset tokens.
+	FrontendURL string
 }
 
 // POST /api/auth/signup
@@ -464,14 +470,18 @@ func (h *AuthHandlers) ForgotPassword(c *fiber.Ctx) error {
 			smtpConfig["from"] = "noreply@oklavier.local"
 		}
 
-		origin := c.Get("Origin")
-		if origin == "" {
-			origin = c.Get("Referer")
+		// SECURITY: build the reset URL from server-side config, never from
+		// request headers. Trusting Origin/Referer let an attacker submit
+		// `Origin: https://evil.com` and receive (via the victim's email) a
+		// reset link that POSTs the raw reset token to their server.
+		base := h.FrontendURL
+		if base == "" {
+			base = os.Getenv("FRONTEND_URL")
 		}
-		if origin == "" {
-			origin = "http://localhost:3000"
+		if base == "" {
+			base = "http://localhost:3000"
 		}
-		resetURL := fmt.Sprintf("%s/login?reset=%s", strings.TrimRight(origin, "/"), raw)
+		resetURL := fmt.Sprintf("%s/login?reset=%s", strings.TrimRight(base, "/"), raw)
 
 		go sendResetEmail(req.Email, resetURL, smtpConfig)
 	}

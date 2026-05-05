@@ -429,11 +429,13 @@ function connect() {
   var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   var wsUrl = proto + '//' + location.host + '/guac-ws/' + SID;
 
-  // Custom tunnel: raw WebSocket (bypasses Guacamole.WebSocketTunnel which adds '?' to URL)
+  // SECURITY: SESSION_TOKEN is now a single-use random bearer issued by the
+  // core (TTL 60s, push-admitted to this agent server-to-server). It is NOT
+  // a long-lived JWT. We pass it as ?ticket= rather than ?token= so it goes
+  // through the ticket consumption path (single-use; can't be replayed).
   tunnel = new Guacamole.Tunnel();
-  // Pass token as query param for WebSocket auth (cookies may not be set yet on first connect)
   var wsParams = 'w=' + window.innerWidth + '&h=' + window.innerHeight;
-  if (SESSION_TOKEN) wsParams += '&token=' + SESSION_TOKEN;
+  if (SESSION_TOKEN) wsParams += '&ticket=' + encodeURIComponent(SESSION_TOKEN);
   var wsAuthUrl = wsUrl + '?' + wsParams;
   var socket = new WebSocket(wsAuthUrl);
   var parser = new Guacamole.Parser();
