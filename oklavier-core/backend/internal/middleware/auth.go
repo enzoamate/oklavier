@@ -10,34 +10,37 @@ import (
 	"oklavier-api/internal/auth"
 )
 
-// AuthRequired validates requests by checking the Bearer JWT access token.
+// accessCookieName must match the value in handlers/auth_handlers.go.
+const accessCookieName = "oklavier_access"
+
+// AuthRequired validates requests via:
+//  1. The httpOnly access cookie (oklavier_access) — primary, browser-driven.
+//  2. Authorization: Bearer <jwt> — fallback for automation / API clients.
 //
-// SECURITY: Basic Auth was removed from this path. Browsers cache Basic
-// credentials and replay them automatically, opening CSRF surface on every
-// authenticated route. Basic Auth also bypassed banned/locked_until checks.
-// Use AutomationAuthRequired (separate group) if Basic Auth is needed for
-// API automation; that path enforces the ban/lock checks.
+// Basic Auth was removed from this path; use AutomationAuthRequired on a
+// dedicated /api/automation/* group if needed.
 func AuthRequired(db *sqlx.DB, blacklist *auth.TokenBlacklist) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		authHeader := c.Get("Authorization")
-
-		// Bearer JWT only.
-		if strings.HasPrefix(authHeader, "Bearer ") {
-			tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
-			claims, err := auth.ValidateAccessToken(tokenStr)
-			if err == nil {
-				// Check blacklist
-				if blacklist != nil && claims.ID != "" && blacklist.IsBlacklisted(claims.ID) {
-					return c.Status(401).JSON(fiber.Map{"error": "Token revoked"})
-				}
-				c.Locals("user_id", claims.UserID)
-				c.Locals("user_email", claims.Email)
-				c.Locals("user_role", claims.Role)
-				return c.Next()
+		tokenStr := c.Cookies(accessCookieName)
+		if tokenStr == "" {
+			if authHeader := c.Get("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
+				tokenStr = strings.TrimPrefix(authHeader, "Bearer ")
 			}
 		}
-
-		return c.Status(401).JSON(fiber.Map{"error": "Not authenticated"})
+		if tokenStr == "" {
+			return c.Status(401).JSON(fiber.Map{"error": "Not authenticated"})
+		}
+		claims, err := auth.ValidateAccessToken(tokenStr)
+		if err != nil {
+			return c.Status(401).JSON(fiber.Map{"error": "Not authenticated"})
+		}
+		if blacklist != nil && claims.ID != "" && blacklist.IsBlacklisted(claims.ID) {
+			return c.Status(401).JSON(fiber.Map{"error": "Token revoked"})
+		}
+		c.Locals("user_id", claims.UserID)
+		c.Locals("user_email", claims.Email)
+		c.Locals("user_role", claims.Role)
+		return c.Next()
 	}
 }
 

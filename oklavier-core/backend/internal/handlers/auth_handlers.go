@@ -20,12 +20,44 @@ type AuthHandlers struct {
 	DB          *db.DB
 	RateLimiter *auth.RateLimiter
 	Blacklist   *auth.TokenBlacklist
-	// FrontendURL is the canonical base URL of the frontend (e.g.
-	// "https://oklavier.example.com"). Used for outbound links such as
-	// password-reset emails. MUST come from server-side configuration —
-	// previously, password-reset URLs were built from the request Origin /
-	// Referer header, allowing an attacker to phish reset tokens.
 	FrontendURL string
+	// SecureCookie controls the `Secure` attribute on auth cookies.
+	// True in production (HTTPS), false in local dev.
+	SecureCookie bool
+}
+
+const (
+	accessCookieName  = "oklavier_access"
+	refreshCookieName = "oklavier_refresh"
+)
+
+// setAuthCookies writes the auth pair as httpOnly+Secure+SameSite=Lax cookies.
+// SameSite=Lax keeps GETs cross-site safe while blocking the form-POST CSRF
+// vector (combined with the Origin check in middleware/csrf.go).
+func (h *AuthHandlers) setAuthCookies(c *fiber.Ctx, access, refresh string) {
+	c.Cookie(&fiber.Cookie{
+		Name:     accessCookieName,
+		Value:    access,
+		Path:     "/",
+		MaxAge:   int(auth.AccessTokenTTL.Seconds()),
+		HTTPOnly: true,
+		Secure:   h.SecureCookie,
+		SameSite: "Lax",
+	})
+	c.Cookie(&fiber.Cookie{
+		Name:     refreshCookieName,
+		Value:    refresh,
+		Path:     "/",
+		MaxAge:   int(auth.RefreshTokenTTL.Seconds()),
+		HTTPOnly: true,
+		Secure:   h.SecureCookie,
+		SameSite: "Lax",
+	})
+}
+
+func (h *AuthHandlers) clearAuthCookies(c *fiber.Ctx) {
+	c.Cookie(&fiber.Cookie{Name: accessCookieName, Value: "", Path: "/", MaxAge: -1, HTTPOnly: true, Secure: h.SecureCookie, SameSite: "Lax"})
+	c.Cookie(&fiber.Cookie{Name: refreshCookieName, Value: "", Path: "/", MaxAge: -1, HTTPOnly: true, Secure: h.SecureCookie, SameSite: "Lax"})
 }
 
 // POST /api/auth/signup
@@ -195,30 +227,35 @@ func (h *AuthHandlers) Login(c *fiber.Ctx) error {
 
 // POST /api/auth/logout
 func (h *AuthHandlers) Logout(c *fiber.Ctx) error {
-	// Extract access token from Authorization header
-	authHeader := c.Get("Authorization")
-	if strings.HasPrefix(authHeader, "Bearer ") {
-		tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
-		claims, err := auth.ValidateAccessToken(tokenStr)
-		if err == nil && claims.ID != "" {
-			// Blacklist the access token for its remaining lifetime
-			ttl := time.Until(claims.ExpiresAt.Time)
-			h.Blacklist.Blacklist(claims.ID, ttl)
+	// Read access token from cookie (preferred) or Authorization header (legacy/automation).
+	accessTok := c.Cookies(accessCookieName)
+	if accessTok == "" {
+		if authHeader := c.Get("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
+			accessTok = strings.TrimPrefix(authHeader, "Bearer ")
+		}
+	}
+	if accessTok != "" {
+		if claims, err := auth.ValidateAccessToken(accessTok); err == nil && claims.ID != "" {
+			h.Blacklist.Blacklist(claims.ID, time.Until(claims.ExpiresAt.Time))
 		}
 	}
 
-	// Delete refresh token if provided
-	var req struct {
-		RefreshToken string `json:"refresh_token"`
+	refreshTok := c.Cookies(refreshCookieName)
+	if refreshTok == "" {
+		// Body fallback for legacy clients during migration.
+		var req struct {
+			RefreshToken string `json:"refresh_token"`
+		}
+		c.BodyParser(&req)
+		refreshTok = req.RefreshToken
 	}
-	c.BodyParser(&req)
-	if req.RefreshToken != "" {
-		refreshClaims, err := auth.ValidateRefreshToken(req.RefreshToken)
-		if err == nil {
+	if refreshTok != "" {
+		if refreshClaims, err := auth.ValidateRefreshToken(refreshTok); err == nil {
 			h.DB.Exec(`DELETE FROM refresh_token WHERE jti = $1`, refreshClaims.ID)
 		}
 	}
 
+	h.clearAuthCookies(c)
 	return c.JSON(fiber.Map{"ok": true})
 }
 
@@ -250,63 +287,69 @@ func (h *AuthHandlers) Me(c *fiber.Ctx) error {
 	})
 }
 
-// POST /api/auth/refresh
+// POST /api/auth/refresh — reads refresh token from the httpOnly cookie,
+// rotates it, and writes new cookies. No tokens are ever returned in JSON.
 func (h *AuthHandlers) Refresh(c *fiber.Ctx) error {
-	// Rate limit refresh attempts
 	if !h.RateLimiter.Allow(c.IP()) {
 		return c.Status(429).JSON(fiber.Map{"error": "Too many refresh attempts. Please try again later."})
 	}
 
-	var req struct {
-		RefreshToken string `json:"refresh_token"`
+	refreshTok := c.Cookies(refreshCookieName)
+	if refreshTok == "" {
+		// Body fallback for legacy clients during migration.
+		var req struct {
+			RefreshToken string `json:"refresh_token"`
+		}
+		c.BodyParser(&req)
+		refreshTok = req.RefreshToken
 	}
-	if err := c.BodyParser(&req); err != nil || req.RefreshToken == "" {
-		return c.Status(400).JSON(fiber.Map{"error": "refresh_token is required"})
+	if refreshTok == "" {
+		return c.Status(401).JSON(fiber.Map{"error": "Not authenticated"})
 	}
 
-	// Validate the refresh token
-	claims, err := auth.ValidateRefreshToken(req.RefreshToken)
+	claims, err := auth.ValidateRefreshToken(refreshTok)
 	if err != nil {
+		h.clearAuthCookies(c)
 		return c.Status(401).JSON(fiber.Map{"error": "Invalid or expired refresh token"})
 	}
 
-	// Atomic rotation: DELETE + check in one query (prevents race condition)
+	// Atomic rotation: DELETE + check in one query.
 	var userID string
 	err = h.DB.QueryRow(`DELETE FROM refresh_token WHERE jti = $1 AND expires_at > NOW() RETURNING user_id`, claims.ID).Scan(&userID)
 	if err != nil {
+		h.clearAuthCookies(c)
 		return c.Status(401).JSON(fiber.Map{"error": "Refresh token revoked or expired"})
 	}
 
-	// Get current user info (role may have changed)
 	var email, role string
-	err = h.DB.QueryRow(`SELECT email, COALESCE(role, 'user') FROM "user" WHERE id = $1`, userID).Scan(&email, &role)
+	err = h.DB.QueryRow(`SELECT email, COALESCE(role, 'user') FROM "user" WHERE id = $1
+		AND COALESCE(banned, false) = false`, userID).Scan(&email, &role)
 	if err != nil {
+		h.clearAuthCookies(c)
 		return c.Status(401).JSON(fiber.Map{"error": "User not found"})
 	}
 
-	// Generate new tokens
 	accessToken, _, err := auth.GenerateAccessToken(userID, email, role)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
 	}
-
 	newRefreshToken, newRefreshJTI, err := auth.GenerateRefreshToken(userID)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
 	}
-
-	// Store new refresh token
 	h.DB.Exec(`INSERT INTO refresh_token (jti, user_id, expires_at, ip_address, user_agent) VALUES ($1, $2, $3, $4, $5)`,
 		newRefreshJTI, userID, time.Now().Add(auth.RefreshTokenTTL), c.IP(), c.Get("User-Agent"))
 
+	h.setAuthCookies(c, accessToken, newRefreshToken)
 	return c.JSON(fiber.Map{
-		"access_token":  accessToken,
-		"refresh_token": newRefreshToken,
-		"expires_in":    int(auth.AccessTokenTTL.Seconds()),
+		"ok":         true,
+		"expires_in": int(auth.AccessTokenTTL.Seconds()),
 	})
 }
 
-// Internal: create access + refresh tokens and return them
+// createTokens issues access + refresh tokens AS HTTPONLY COOKIES.
+// The tokens are NOT returned in the response body — that path put the
+// long-lived refresh token in localStorage, where any XSS could exfiltrate it.
 func (h *AuthHandlers) createTokens(c *fiber.Ctx, userID, email, role, name string) error {
 	accessToken, _, err := auth.GenerateAccessToken(userID, email, role)
 	if err != nil {
@@ -318,13 +361,14 @@ func (h *AuthHandlers) createTokens(c *fiber.Ctx, userID, email, role, name stri
 		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
 	}
 
-	// Store refresh token in DB
 	_, err = h.DB.Exec(`INSERT INTO refresh_token (jti, user_id, expires_at, ip_address, user_agent) VALUES ($1, $2, $3, $4, $5)`,
 		refreshJTI, userID, time.Now().Add(auth.RefreshTokenTTL), c.IP(), c.Get("User-Agent"))
 	if err != nil {
 		log.Printf("Refresh token insert error: %v", err)
 		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
 	}
+
+	h.setAuthCookies(c, accessToken, refreshToken)
 
 	return c.JSON(fiber.Map{
 		"user": fiber.Map{
@@ -333,9 +377,7 @@ func (h *AuthHandlers) createTokens(c *fiber.Ctx, userID, email, role, name stri
 			"email": email,
 			"role":  role,
 		},
-		"access_token":  accessToken,
-		"refresh_token": refreshToken,
-		"expires_in":    int(auth.AccessTokenTTL.Seconds()),
+		"expires_in": int(auth.AccessTokenTTL.Seconds()),
 	})
 }
 

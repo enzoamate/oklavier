@@ -424,8 +424,10 @@ func main() {
 	rateLimiter := auth.NewRateLimiter(valkeyURL)
 	blacklist := auth.NewTokenBlacklist(valkeyURL)
 	appCache := cache.New(valkeyURL)
+	// SecureCookie drives the `Secure` attribute on auth cookies; false in
+	// local dev (http://localhost), true once the frontend is HTTPS.
 	secureCookie := strings.HasPrefix(frontendURL, "https://")
-	authHandlers := &handlers.AuthHandlers{DB: database, RateLimiter: rateLimiter, Blacklist: blacklist, FrontendURL: frontendURL}
+	authHandlers := &handlers.AuthHandlers{DB: database, RateLimiter: rateLimiter, Blacklist: blacklist, FrontendURL: frontendURL, SecureCookie: secureCookie}
 
 	sessionHandler := &handlers.SessionHandler{DB: database, Agent: k8sAgent, RateLimiter: rateLimiter, Cache: appCache}
 	adminHandler := &handlers.AdminHandler{DB: database, Cache: appCache}
@@ -439,6 +441,10 @@ func main() {
 	app.Use(logger.New())
 	app.Use(middleware.SecurityHeaders())
 	app.Use(middleware.InternalOnly())
+	// CSRF defense: reject cross-site state-changing requests. Cookies use
+	// SameSite=Lax which already blocks XHR cross-site, but Lax allows
+	// top-level form-POSTs — this Origin/Sec-Fetch-Site check closes that gap.
+	app.Use(middleware.CSRFGuard([]string{frontendURL}))
 	app.Use(cors.New(cors.Config{
 		AllowOrigins:     frontendURL,
 		AllowCredentials: false,

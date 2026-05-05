@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { authFetch } from "./auth-fetch";
-import { getAccessToken } from "./token-store";
 
 interface ProxyStreamOptions {
   sessionId: string;
@@ -94,10 +93,11 @@ export function useProxyStream({ sessionId, onConnected, onDisconnected, onError
         }
       };
 
-      // 6. Connect WebSocket for control channel (pass token as query param)
+      // 6. Connect WebSocket for control channel. Auth is the httpOnly
+      // oklavier_access cookie, sent automatically by the browser on the
+      // same-origin upgrade (no token in URL — that used to leak via logs).
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const token = getAccessToken();
-      const wsUrl = `${protocol}//${window.location.host}/proxy/ws/${sessionId}${token ? `?token=${encodeURIComponent(token)}` : ""}`;
+      const wsUrl = `${protocol}//${window.location.host}/proxy/ws/${sessionId}`;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 

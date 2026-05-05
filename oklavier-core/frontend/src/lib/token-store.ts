@@ -1,22 +1,22 @@
-const ACCESS_TOKEN_KEY = "oklavier_access_token";
-const REFRESH_TOKEN_KEY = "oklavier_refresh_token";
+// Auth tokens are now httpOnly cookies set by the Go backend (login/refresh
+// flows). They are NEVER accessible from JavaScript — that is the entire
+// point: an XSS can no longer exfiltrate the long-lived refresh token.
+//
+// These functions are kept as no-ops to avoid breaking imports during the
+// migration. They will be removed once all consumers stop calling them.
 
 export function getAccessToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem(ACCESS_TOKEN_KEY);
+  return null;
 }
 
 export function getRefreshToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem(REFRESH_TOKEN_KEY);
+  return null;
 }
 
-export function setTokens(access: string, refresh: string): void {
-  localStorage.setItem(ACCESS_TOKEN_KEY, access);
-  localStorage.setItem(REFRESH_TOKEN_KEY, refresh);
+export function setTokens(_access: string, _refresh: string): void {
+  // No-op: cookies are set by the backend Set-Cookie response.
 }
 
 export function clearTokens(): void {
-  localStorage.removeItem(ACCESS_TOKEN_KEY);
-  localStorage.removeItem(REFRESH_TOKEN_KEY);
+  // No-op: logout endpoint clears the cookies.
 }
