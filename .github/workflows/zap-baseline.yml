@@ -1,0 +1,35 @@
+name: OWASP ZAP Baseline
+
+on:
+  schedule:
+    # Weekly Monday 6am UTC. Avoid every-push noise — ZAP takes ~5min.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Target URL"
+        required: true
+        default: "https://oklavier.k0be.io"
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  zap-baseline:
+    name: ZAP baseline scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.14.0
+        with:
+          target: ${{ github.event.inputs.target || 'https://oklavier.k0be.io' }}
+          # -m 5: max 5 minutes
+          # -j: also run AJAX spider
+          # Rules from .zap/rules.tsv silence known false-positives.
+          cmd_options: "-m 5 -j"
+          fail_action: false
+          allow_issue_writing: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+          rules_file_name: ".zap/rules.tsv"

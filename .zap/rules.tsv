@@ -1,0 +1,8 @@
+# ZAP baseline rule overrides.
+# Format: <ruleId>\t<severity>\t<reason>
+# severity: IGNORE / INFO / WARN / FAIL
+# Run: zaproxy/action-baseline applies these to silence known FPs.
+#
+# 10038	IGNORE	CSP — wildcard sources we deliberately allow (cdn.jsdelivr.net for guacamole-common)
+# 10202	IGNORE	Anti-CSRF token — we use SameSite=Lax + Origin/Sec-Fetch-Site, not double-submit token
+# 10027	IGNORE	Information disclosure: timestamp — Fiber-emitted Date header
