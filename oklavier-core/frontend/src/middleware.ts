@@ -22,6 +22,28 @@ export async function middleware(request: NextRequest) {
 
   // API routes: require an auth cookie (or a Bearer header for automation).
   if (pathname.startsWith("/api/")) {
+    // CSRF: reject cross-site state-changing requests. The Go API trusts the
+    // BFF via X-Oklavier-Internal, so the BFF MUST be the gate that checks
+    // Origin / Sec-Fetch-Site for browser-driven mutations.
+    const m = request.method;
+    if (m === "POST" || m === "PUT" || m === "PATCH" || m === "DELETE") {
+      const fetchSite = request.headers.get("sec-fetch-site");
+      const origin = request.headers.get("origin");
+      const expected = `${request.nextUrl.protocol}//${request.nextUrl.host}`;
+      // Bearer-only automation clients have neither a cookie nor a browser
+      // origin — let those through (Authorization is the auth signal).
+      const isAutomation = !request.cookies.get(ACCESS_COOKIE)?.value
+        && request.headers.get("authorization")?.startsWith("Bearer ");
+      if (!isAutomation) {
+        if (fetchSite === "cross-site") {
+          return NextResponse.json({ error: "Cross-site request denied" }, { status: 403 });
+        }
+        if (origin && origin !== expected) {
+          return NextResponse.json({ error: "Origin not allowed" }, { status: 403 });
+        }
+      }
+    }
+
     const hasCookie = request.cookies.get(ACCESS_COOKIE)?.value;
     const hasBearer = request.headers.get("authorization")?.startsWith("Bearer ");
     if (!hasCookie && !hasBearer) {
