@@ -373,7 +373,7 @@ func main() {
 		ContextKey: "request_id",
 	}))
 	app.Use(logger.New(logger.Config{
-		Format:     `{"ts":"${time}","level":"info","status":${status},"method":"${method}","path":"${route}","ip":"${ip}","latency_ms":${latency},"req_id":"${locals:request_id}"}` + "\n",
+		Format:     `{"ts":"${time}","level":"info","status":${status},"method":"${method}","path":"${route}","ip":"${ip}","latency":"${latency}","req_id":"${locals:request_id}"}` + "\n",
 		TimeFormat: "2006-01-02T15:04:05.000Z07:00",
 	}))
 	// CORS: allow only the frontend URL and the agent's own domain
