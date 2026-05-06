@@ -337,7 +337,7 @@ func (h *OIDCHandler) Callback(c *fiber.Ctx) error {
 	// on the callback page, and `window.opener` if a popup was used. The
 	// long-lived (7-day) refresh token in particular must never sit in URL state.
 	c.Cookie(&fiber.Cookie{
-		Name:     "oklavier_access_token",
+		Name:     "oklavier_access",
 		Value:    accessToken,
 		Path:     "/",
 		MaxAge:   int(auth.AccessTokenTTL.Seconds()),
@@ -346,7 +346,7 @@ func (h *OIDCHandler) Callback(c *fiber.Ctx) error {
 		SameSite: "Lax",
 	})
 	c.Cookie(&fiber.Cookie{
-		Name:     "oklavier_refresh_token",
+		Name:     "oklavier_refresh",
 		Value:    refreshToken,
 		Path:     "/",
 		MaxAge:   int(auth.RefreshTokenTTL.Seconds()),
