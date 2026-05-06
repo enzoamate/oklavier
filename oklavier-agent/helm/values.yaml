@@ -45,9 +45,15 @@ rbac:
 guacd:
   enabled: true
   replicas: 1
+  # Default points at our downstream fork that adds RDP virtual channels
+  # missing from upstream guacd: URBDRC (USB) and rdpecam (webcam).
+  # Source: https://github.com/enzoamate/guacamole-server (oklavier-channels branch).
+  # To opt back into upstream, set guacd.image.repository=guacamole/guacd and
+  # guacd.image.tag=1.6.0 — patches are additive only, not behaviour-changing
+  # for channels guacd already supports.
   image:
-    repository: guacamole/guacd
-    tag: "1.6.0"
+    repository: ghcr.io/enzoamate/oklavier-guacd
+    tag: "oklavier-channels"
   resources:
     requests:
       cpu: 100m
