@@ -201,10 +201,10 @@ export default function WorkspacesPage() {
         }
       }
 
+      // Switch to the "ready" overlay (checkmark) for the brief redirect window.
       setProgress(100);
-      setLaunchMessage(t("workspace.session_created"));
-      setToast(t("workspace.session_created"));
-      setTimeout(() => setToast(null), 4000);
+      setLaunchMessage("");
+      setLaunchPhase("ready");
 
       invalidate("/api/workspaces");
       invalidate("/api/sessions");
@@ -615,29 +615,28 @@ export default function WorkspacesPage() {
         </div>
       )}
 
-      {/* Ready overlay (brief) */}
+      {/* Ready overlay (brief — shown for ~500ms before redirect) */}
       {launchPhase === "ready" && selectedImage && (
-        <div className="fixed inset-0 z-40 flex flex-col items-center justify-center">
+        <div className="fixed inset-0 z-40 flex flex-col items-center justify-center bg-black/30 backdrop-blur-sm">
           <div className="relative">
-            <svg className="size-52 -rotate-90" viewBox="0 0 208 208">
-              <circle cx="104" cy="104" r="100" fill="none" stroke="#7096ff" strokeWidth="4" />
+            {/* Solid green ring */}
+            <svg className="size-52" viewBox="0 0 208 208">
+              <circle cx="104" cy="104" r="100" fill="none" stroke="#22c55e" strokeWidth="4" />
             </svg>
+            {/* Checkmark + workspace info */}
             <div className="absolute inset-0 flex flex-col items-center justify-center">
-              <div className="backdrop-blur-xl bg-black/40 size-40 rounded-full flex flex-col items-center justify-center gap-2">
-                <p className="text-white/60 text-xs">{t("common.loading")}</p>
-                <p className="text-white font-semibold">{selectedImage.friendly_name}</p>
+              <div className="backdrop-blur-xl bg-black/50 size-40 rounded-full flex flex-col items-center justify-center gap-3 px-4">
+                <svg className="size-10 text-green-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
                 {selectedImage.image_src && (
-                  <img src={imgSrc(selectedImage)} alt="" className="size-12" />
+                  <img src={imgSrc(selectedImage)} alt="" className="size-8" />
                 )}
-                <p className="text-white/50 text-xs text-center px-4">{launchMessage}</p>
+                <p className="text-white text-sm font-medium text-center leading-tight line-clamp-2">{selectedImage.friendly_name}</p>
               </div>
             </div>
           </div>
-          <div className="mt-8 text-center">
-            <p className="text-white text-2xl font-bold">
-              100% <span className="text-white/60 font-normal">{t("workspace.complete")}</span>
-            </p>
-          </div>
+          <p className="mt-6 text-white/70 text-sm">{t("workspace.session_created")}</p>
         </div>
       )}
 
