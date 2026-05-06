@@ -12,6 +12,7 @@ import { useAPI, usePostAPI, apiAction, invalidate } from "@/lib/api";
 import { authFetch } from "@/lib/auth-fetch";
 import { useBranding } from "@/lib/use-branding";
 import { OklavierLogo } from "@/components/oklavier-logo";
+import { ActiveSessionStack } from "@/components/draggable-session-card";
 
 interface WorkspaceImage {
   image_id: string;
@@ -384,45 +385,19 @@ export default function WorkspacesPage() {
         </div>
       </div>
 
-      {/* Active sessions - floating cards on the left */}
+      {/* Active sessions — draggable + minimizable cards. Position is
+          persisted per-session in localStorage; cards snap to the nearest
+          vertical edge after drag. */}
       {sessions.length > 0 && launchPhase === "idle" && (
-        <div className="absolute top-20 left-5 z-10 space-y-3 max-h-[calc(100vh-6rem)] overflow-y-auto">
-          {sessions.map((session) => (
-            <div key={session.session_id} className="w-48 backdrop-blur-xl bg-black/40 border border-white/10 rounded-xl overflow-hidden shadow-2xl">
-              <div className="flex items-center gap-2 p-3">
-                {session.image.image_src && (
-                  <img src={imgSrc(session.image)} alt="" className="size-8 rounded" />
-                )}
-                <div className="flex-1 min-w-0">
-                  <p className="text-white text-sm font-medium truncate">{session.image.friendly_name}</p>
-                  <div className="flex items-center gap-2 text-xs text-white/60">
-                    <span className="text-green-400">{timeAgo(session.start_date)}</span>
-                    <span className="text-red-400">{timeLeft(session.expiration_date)}</span>
-                  </div>
-                </div>
-                <button onClick={() => handleDestroy(session.session_id)} className="text-white/40 hover:text-white/80">
-                  {destroying === session.session_id ? <Loader2 className="size-3.5 animate-spin" /> : <X className="size-3.5" />}
-                </button>
-              </div>
-              <div className="mx-2 mb-2 rounded-lg bg-white/5 aspect-video flex items-center justify-center relative overflow-hidden">
-                <img
-                  src={`/api/sessions/${encodeURIComponent(session.session_id)}/screenshot`}
-                  alt=""
-                  className="w-full h-full object-cover"
-                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                />
-                <Monitor className="size-6 text-white/20 absolute" />
-                <div className={`absolute top-1.5 right-1.5 size-2.5 rounded-full ${session.operational_status === "running" ? "bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.5)]" : "bg-yellow-500 shadow-[0_0_6px_rgba(234,179,8,0.5)]"}`} />
-              </div>
-              <div className="flex border-t border-white/10">
-                <button onClick={() => handleConnect(session)} className="flex-1 flex items-center justify-center py-2.5 text-oklavier-blue hover:bg-white/5 transition-colors"><Play className="size-4" /></button>
-                <button onClick={() => handleDestroy(session.session_id)} className="flex-1 flex items-center justify-center py-2.5 text-white/50 hover:bg-white/5 transition-colors"><Trash2 className="size-4" /></button>
-                <button onClick={() => { window.location.href = `/sessions/${session.session_id}`; }} className="flex-1 flex items-center justify-center py-2.5 text-white/50 hover:bg-white/5 transition-colors"><Maximize2 className="size-4" /></button>
-                <button className="flex-1 flex items-center justify-center py-2.5 text-white/50 hover:bg-white/5 transition-colors"><Copy className="size-4" /></button>
-              </div>
-            </div>
-          ))}
-        </div>
+        <ActiveSessionStack
+          sessions={sessions}
+          imgSrcResolver={imgSrc}
+          timeAgo={timeAgo}
+          timeLeft={timeLeft}
+          onConnect={handleConnect}
+          onDestroy={handleDestroy}
+          destroying={destroying}
+        />
       )}
 
       {/* Launch Modal */}
