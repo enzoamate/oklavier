@@ -168,9 +168,12 @@ body.sb-open #sidebar { transform: translateX(0); }
 .periph-perm { background: rgba(112,150,255,0.08); border: 1px solid rgba(112,150,255,0.2); border-radius: 10px; padding: 16px; text-align: center; margin-bottom: 12px; }
 .periph-perm p { font-size: 12px; color: rgba(255,255,255,0.6); margin-bottom: 12px; }
 .periph-perm button { background: linear-gradient(90deg, #7096ff, #65d5c5); color: white; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; }
-.periph-add { margin-top: 12px; }
-.periph-add button { background: rgba(255,255,255,0.04); color: rgba(255,255,255,0.7); border: 1px dashed rgba(255,255,255,0.12); padding: 10px; border-radius: 10px; cursor: pointer; font-size: 12px; width: 100%; }
-.periph-add button:hover { background: rgba(112,150,255,0.05); border-color: rgba(112,150,255,0.4); color: rgba(255,255,255,0.95); }
+/* Sticky footer (Add USB row) — outside the scrollable list, separated by
+   a thin divider so the user always sees it regardless of list length. */
+#periph-add-row { flex-shrink: 0; padding-top: 12px; margin-top: 12px; border-top: 1px solid rgba(255,255,255,0.06); }
+#periph-add-row:empty { display: none; }
+#periph-add-row button { background: rgba(255,255,255,0.04); color: rgba(255,255,255,0.7); border: 1px dashed rgba(255,255,255,0.12); padding: 10px; border-radius: 10px; cursor: pointer; font-size: 12px; width: 100%; }
+#periph-add-row button:hover { background: rgba(112,150,255,0.05); border-color: rgba(112,150,255,0.4); color: rgba(255,255,255,0.95); }
 .periph-empty { text-align: center; padding: 24px; font-size: 12px; color: rgba(255,255,255,0.35); }
 
 /* Stats */
@@ -241,6 +244,7 @@ body.shadow-mode .dc-destroy-btn { display: none !important; }
     </button>
     <h3 data-t="peripherals">T_PERIPHERALS</h3>
     <div id="periph-list"></div>
+    <div id="periph-add-row"></div>
   </div>
 </div>
 <div id="display"></div>
@@ -1080,12 +1084,12 @@ async function refreshPeripheralsList() {
   }
 
   // "+ Add USB device" picker — vendor-specific class only, OS blocks the
-  // rest (HID/CCID/audio/video/storage).
+  // rest (HID/CCID/audio/video/storage). Lives outside #periph-list so it
+  // stays pinned to the bottom of the modal even when the list scrolls.
+  var addRow = document.getElementById('periph-add-row');
+  addRow.innerHTML = '';
   if (navigator.usb) {
-    var add = document.createElement('div');
-    add.className = 'periph-add';
-    add.innerHTML = '<button onclick="addUsbPeripheral()">' + (T.periph_add_usb || '+ Add USB device') + '</button>';
-    list.appendChild(add);
+    addRow.innerHTML = '<button onclick="addUsbPeripheral()">' + (T.periph_add_usb || '+ Add USB device') + '</button>';
   }
 }
 
