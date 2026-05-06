@@ -6,10 +6,9 @@ import { Minus, Maximize2 as Restore, X, Play, Trash2, Maximize2, Copy, Loader2,
 type Position = { x: number; y: number };
 type CardState = { pos: Position; minimized: boolean };
 
-// The card uses a few fields from the parent's WorkspaceSession type. Any
-// extra fields are tolerated (we just don't read them) — but TypeScript
-// won't widen automatically, so we mirror the optional shape to accept
-// any WorkspaceSession-shaped object.
+// SessionLike mirrors the parent's WorkspaceSession shape. We only read a
+// small subset; extras are declared optional so any WorkspaceSession-shaped
+// object can be passed without tsc complaining about missing properties.
 interface SessionLike {
   session_id: string;
   image: { friendly_name: string; image_src: string };
@@ -22,7 +21,6 @@ interface SessionLike {
   agent_vnc_url?: string;
   session_type?: string;
   workspace_type?: string;
-  [key: string]: unknown;
 }
 
 interface Props {
