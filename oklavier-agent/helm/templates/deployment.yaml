@@ -9,6 +9,11 @@ spec:
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicas }}
   {{- end }}
+  # The recordings PVC is RWO, so a rolling update deadlocks: the new pod
+  # can't bind the volume until the old pod releases it. Recreate kills
+  # the old pod first (~few seconds of downtime) then starts the new one.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: oklavier-agent

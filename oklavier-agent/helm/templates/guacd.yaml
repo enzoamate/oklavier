@@ -9,6 +9,9 @@ metadata:
     app.kubernetes.io/component: guacd
 spec:
   replicas: {{ .Values.guacd.replicas | default 1 }}
+  # Same RWO PVC deadlock as oklavier-agent — recordings volume is shared.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: guacd

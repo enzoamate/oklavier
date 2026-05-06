@@ -7,8 +7,14 @@ metadata:
   labels:
     {{- include "oklavier-agent.labels" . | nindent 4 }}
 spec:
+  # RWO is the conservative default — works with hostPath-based local
+  # provisioners (e.g. openebs-hostpath) because RWO means "one node",
+  # and Recreate guarantees only one pod per deployment is alive. Agent
+  # and guacd share the same volume but co-schedule on the node selected
+  # by WaitForFirstConsumer, so they can mount it together. Set to
+  # ReadWriteMany only if you have an RWX-capable SC (NFS, CephFS, Longhorn).
   accessModes:
-    - ReadWriteMany
+    - {{ .Values.recordings.persistence.accessMode | default "ReadWriteOnce" }}
   resources:
     requests:
       storage: {{ .Values.recordings.persistence.size }}
