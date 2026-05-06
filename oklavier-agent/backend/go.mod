@@ -4,9 +4,7 @@ go 1.25.0
 
 require (
 	github.com/gofiber/contrib/websocket v1.3.4
-	github.com/gofiber/fiber/v2 v2.52.12
-	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/google/uuid v1.6.0
+	github.com/gofiber/fiber/v2 v2.52.13
 	github.com/minio/minio-go/v7 v7.0.82
 	github.com/redis/go-redis/v9 v9.18.0
 	k8s.io/api v0.35.3
@@ -30,6 +28,7 @@ require (
 	github.com/go-openapi/swag v0.23.0 // indirect
 	github.com/goccy/go-json v0.10.4 // indirect
 	github.com/google/gnostic-models v0.7.0 // indirect
+	github.com/google/uuid v1.6.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/compress v1.17.11 // indirect
