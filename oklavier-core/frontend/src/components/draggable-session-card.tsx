@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Minus, Maximize2 as Restore, X, Play, Trash2, Maximize2, Copy, Loader2, Monitor } from "lucide-react";
 
 type Position = { x: number; y: number };
@@ -91,7 +91,7 @@ export function DraggableSessionCard({
 
     // Clamp inside the viewport
     let x = Math.max(MARGIN, Math.min(w - cardW - MARGIN, p.x));
-    let y = Math.max(MARGIN, Math.min(h - cardH - MARGIN, p.y));
+    const y = Math.max(MARGIN, Math.min(h - cardH - MARGIN, p.y));
 
     // Snap to nearest vertical edge if close
     const distLeft = x;
