@@ -137,6 +137,44 @@ export function ProxyViewer({ sessionId, className = "", onConnected, onDisconne
     return () => window.removeEventListener("paste", handlePaste);
   }, [sendClipboard]);
 
+  // Auto-resize: observe the container and tell the agent to match.
+  // Without this, the source video stays at whatever resolution it booted at
+  // and the browser only letterboxes via object-contain, so the content looks
+  // blurry/zoomed until you wiggle the window enough to trigger a re-layout.
+  useEffect(() => {
+    if (!connected) return;
+    const el = containerRef.current;
+    if (!el) return;
+
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let lastW = 0, lastH = 0;
+    const fire = () => {
+      const w = Math.round(el.clientWidth);
+      const h = Math.round(el.clientHeight);
+      if (w === lastW && h === lastH) return;
+      if (w < 100 || h < 100) return; // ignore degenerate sizes
+      lastW = w; lastH = h;
+      sendResize(w, h);
+    };
+
+    // Initial sync on connect
+    fire();
+
+    const schedule = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(fire, 200);
+    };
+
+    const ro = new ResizeObserver(schedule);
+    ro.observe(el);
+    window.addEventListener("resize", schedule);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", schedule);
+      if (timer) clearTimeout(timer);
+    };
+  }, [connected, sendResize]);
+
   return (
     <div
       ref={containerRef}

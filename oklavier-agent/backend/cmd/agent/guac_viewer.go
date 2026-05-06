@@ -492,6 +492,9 @@ function connect() {
         sendSize();
         setTimeout(resize, 200);
         setTimeout(function() { sendSize(); resize(); }, 1000);
+        // Self-heal in case the VNC server wasn't ready to RandR yet.
+        healAttempts = 0;
+        startHealLoop();
         break;
       case 4:
       case 5:
@@ -583,6 +586,7 @@ function connect() {
 
   // Auto-resize: scale display to fit viewport
   var resizeTimeout = null;
+  var lastSentW = 0, lastSentH = 0;
 
   function resize() {
     var w = window.innerWidth;
@@ -594,14 +598,60 @@ function connect() {
     guac.getDisplay().scale(Math.min(w / dw, h / dh) * s);
   }
 
+  // Only push when the viewport actually changed since last push, otherwise
+  // we spam the server with no-ops every 500ms during the heal loop.
   function sendSize() {
-    guac.sendSize(window.innerWidth, window.innerHeight);
+    var w = window.innerWidth, h = window.innerHeight;
+    if (w < 100 || h < 100) return;
+    if (w === lastSentW && h === lastSentH) return;
+    lastSentW = w; lastSentH = h;
+    guac.sendSize(w, h);
+  }
+
+  // Self-heal: VNC servers often aren't ready to RandR right when the Guac
+  // socket flips to state=3, so the initial sendSize() is dropped silently.
+  // Re-check the display vs viewport for a few seconds after connect; if they
+  // disagree (or the display reports 0×0 because no first frame yet), push
+  // again. Stops once display matches viewport (within 8px slack for the
+  // resize-method=display-update rounding).
+  var healAttempts = 0;
+  function startHealLoop() {
+    if (window._gucHeal) return;
+    window._gucHeal = setInterval(function() {
+      if (!connected) { stopHealLoop(); return; }
+      var w = window.innerWidth, h = window.innerHeight;
+      var dw = guac.getDisplay().getWidth(), dh = guac.getDisplay().getHeight();
+      var mismatch = !dw || !dh || Math.abs(dw - w) > 8 || Math.abs(dh - h) > 8;
+      if (mismatch) {
+        // sendSize() de-dupes by lastSentW/H — clear so we force a push.
+        lastSentW = 0; lastSentH = 0;
+        sendSize();
+        resize();
+      }
+      if (++healAttempts > 20 || !mismatch) stopHealLoop(); // 10s cap
+    }, 500);
+  }
+  function stopHealLoop() {
+    if (window._gucHeal) { clearInterval(window._gucHeal); window._gucHeal = null; }
   }
 
   window.addEventListener('resize', function() {
     resize();
     clearTimeout(resizeTimeout);
     resizeTimeout = setTimeout(function() { sendSize(); resize(); }, 300);
+  });
+
+  // Some browsers don't fire 'resize' on fullscreen entry/exit reliably.
+  document.addEventListener('fullscreenchange', function() {
+    setTimeout(function() { sendSize(); resize(); }, 50);
+  });
+
+  // When the popup/tab regains focus, geometry may have shifted (devtools,
+  // OS scaling). Cheap re-sync.
+  document.addEventListener('visibilitychange', function() {
+    if (document.visibilityState === 'visible') {
+      setTimeout(function() { sendSize(); resize(); }, 50);
+    }
   });
 
   guac.getDisplay().onresize = function(w, h) {
