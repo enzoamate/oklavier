@@ -2,7 +2,6 @@ package auth
 
 import (
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"time"
@@ -15,47 +14,6 @@ var jwtSecret []byte
 
 func SetJWTSecret(secret string) {
 	jwtSecret = []byte(secret)
-}
-
-// --- Legacy viewer token types (used by agent session viewer) ---
-
-type Claims struct {
-	SessionTokenID string `json:"session_token_id"`
-	Authorizations []int  `json:"authorizations"`
-	jwt.RegisteredClaims
-}
-
-func GenerateToken(sessionTokenID string, authorizations []int, expiryHours int) (string, error) {
-	claims := Claims{
-		SessionTokenID: sessionTokenID,
-		Authorizations: authorizations,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Duration(expiryHours) * time.Hour)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-		},
-	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(jwtSecret)
-}
-
-func ValidateToken(tokenString string) (*Claims, error) {
-	// SECURITY: enforce HMAC. Without this, an attacker could forge a token
-	// using `alg: none` or RSA public-key confusion since the keyfunc returned
-	// the raw secret regardless of the declared algorithm.
-	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(t *jwt.Token) (interface{}, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
-		}
-		return jwtSecret, nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	claims, ok := token.Claims.(*Claims)
-	if !ok || !token.Valid {
-		return nil, jwt.ErrSignatureInvalid
-	}
-	return claims, nil
 }
 
 // --- Auth JWT types (access + refresh tokens) ---
@@ -158,19 +116,6 @@ func ValidateRefreshToken(tokenString string) (*RefreshClaims, error) {
 }
 
 // --- Utility functions ---
-
-// CheckPasswordSHA256 verifies password against sha256(password + salt) scheme
-func CheckPasswordSHA256(password, salt, hash string) bool {
-	h := sha256.Sum256([]byte(password + salt))
-	computed := fmt.Sprintf("%x", h)
-	return computed == hash
-}
-
-// HashPasswordSHA256 hashes a password with a salt
-func HashPasswordSHA256(password, salt string) string {
-	h := sha256.Sum256([]byte(password + salt))
-	return fmt.Sprintf("%x", h)
-}
 
 // GenerateRandomToken returns 32 cryptographically-random bytes hex-encoded.
 // Panics on a crypto/rand failure rather than returning an all-zero token,

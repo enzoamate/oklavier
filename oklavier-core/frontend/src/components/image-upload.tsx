@@ -90,8 +90,10 @@ export function ImageUpload({ value, onChange, label, hint, previewHeight = "h-1
         </div>
       )}
 
-      {/* Preview */}
-      {value && (
+      {/* Preview — validate the URL scheme to block javascript:/data:text/html
+          (CodeQL js/xss-through-dom). We only allow data:image/*, https://,
+          or relative paths starting with /. */}
+      {value && /^(data:image\/|https:\/\/|\/)/i.test(value) && (
         <div className="flex items-center gap-2 mt-2">
           <img src={value} alt="" className={`${previewHeight} object-contain rounded bg-white/5 p-1`} />
           <button type="button" onClick={() => onChange("")} className="p-1 text-red-400/50 hover:text-red-400">
