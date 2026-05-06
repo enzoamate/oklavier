@@ -29,16 +29,27 @@ export async function middleware(request: NextRequest) {
     if (m === "POST" || m === "PUT" || m === "PATCH" || m === "DELETE") {
       const fetchSite = request.headers.get("sec-fetch-site");
       const origin = request.headers.get("origin");
-      const expected = `${request.nextUrl.protocol}//${request.nextUrl.host}`;
-      // Bearer-only automation clients have neither a cookie nor a browser
-      // origin — let those through (Authorization is the auth signal).
+      // Compute the expected origin from the inbound `Host` header (what the
+      // client actually saw) — `request.nextUrl.host` may show the pod's
+      // internal port (3000) behind a service / port-forward / ingress.
+      const hostHeader = request.headers.get("host");
+      const proto = request.headers.get("x-forwarded-proto") || request.nextUrl.protocol.replace(":", "");
+      const expectedFromHost = hostHeader ? `${proto}://${hostHeader}` : null;
+      // Also accept FRONTEND_URL from env (set in helm values) and any extras.
+      const allowed = new Set<string>();
+      if (expectedFromHost) allowed.add(expectedFromHost);
+      const cfg = process.env.FRONTEND_URL;
+      if (cfg) allowed.add(cfg.replace(/\/$/, ""));
+      const extra = process.env.OKLAVIER_ALLOWED_ORIGINS;
+      if (extra) for (const o of extra.split(",")) allowed.add(o.trim().replace(/\/$/, ""));
+
       const isAutomation = !request.cookies.get(ACCESS_COOKIE)?.value
         && request.headers.get("authorization")?.startsWith("Bearer ");
       if (!isAutomation) {
         if (fetchSite === "cross-site") {
           return NextResponse.json({ error: "Cross-site request denied" }, { status: 403 });
         }
-        if (origin && origin !== expected) {
+        if (origin && !allowed.has(origin.replace(/\/$/, ""))) {
           return NextResponse.json({ error: "Origin not allowed" }, { status: 403 });
         }
       }
