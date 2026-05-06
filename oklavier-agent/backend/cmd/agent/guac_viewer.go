@@ -135,6 +135,34 @@ body.sb-open #sidebar { transform: translateX(0); }
 .upload-item.done .upload-item-name { color: rgba(16,185,129,0.8); }
 .upload-item.error .upload-item-fill { background: #ef4444; }
 
+/* Peripherals modal */
+#periph-modal { display: none; position: fixed; inset: 0; z-index: 200; }
+#periph-modal.show { display: flex; align-items: center; justify-content: center; }
+#periph-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(4px); }
+#periph-box { position: relative; width: 480px; max-height: 80vh; background: rgba(15,18,37,0.95); backdrop-filter: blur(40px); border: 1px solid rgba(255,255,255,0.1); border-radius: 16px; padding: 24px; overflow-y: auto; }
+#periph-box h3 { font-size: 16px; font-weight: 700; color: rgba(255,255,255,0.9); margin-bottom: 16px; }
+#periph-close { position: absolute; top: 16px; right: 16px; background: none; border: none; color: rgba(255,255,255,0.3); font-size: 20px; cursor: pointer; }
+#periph-close:hover { color: rgba(255,255,255,0.7); }
+#periph-reload { position: absolute; top: 18px; right: 50px; background: none; border: none; color: rgba(255,255,255,0.3); cursor: pointer; padding: 2px; line-height: 0; }
+#periph-reload:hover { color: rgba(255,255,255,0.7); }
+#periph-reload svg { width: 16px; height: 16px; }
+#periph-list { display: flex; flex-direction: column; gap: 6px; }
+.periph-item { display: flex; justify-content: space-between; align-items: center; gap: 12px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; padding: 10px 14px; }
+.periph-label { font-size: 13px; color: rgba(255,255,255,0.8); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
+.periph-toggle { position: relative; display: inline-block; width: 36px; height: 20px; flex-shrink: 0; }
+.periph-toggle input { opacity: 0; width: 0; height: 0; }
+.periph-toggle .periph-slider { position: absolute; cursor: pointer; inset: 0; background: rgba(255,255,255,0.15); transition: 0.2s; border-radius: 20px; }
+.periph-toggle .periph-slider:before { position: absolute; content: ""; height: 14px; width: 14px; left: 3px; top: 3px; background: white; transition: 0.2s; border-radius: 50%; }
+.periph-toggle input:checked + .periph-slider { background: linear-gradient(90deg, #7096ff, #65d5c5); }
+.periph-toggle input:checked + .periph-slider:before { transform: translateX(16px); }
+.periph-perm { background: rgba(112,150,255,0.08); border: 1px solid rgba(112,150,255,0.2); border-radius: 10px; padding: 16px; text-align: center; margin-bottom: 12px; }
+.periph-perm p { font-size: 12px; color: rgba(255,255,255,0.6); margin-bottom: 12px; }
+.periph-perm button { background: linear-gradient(90deg, #7096ff, #65d5c5); color: white; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; }
+.periph-add { margin-top: 12px; }
+.periph-add button { background: rgba(255,255,255,0.04); color: rgba(255,255,255,0.7); border: 1px dashed rgba(255,255,255,0.12); padding: 10px; border-radius: 10px; cursor: pointer; font-size: 12px; width: 100%; }
+.periph-add button:hover { background: rgba(112,150,255,0.05); border-color: rgba(112,150,255,0.4); color: rgba(255,255,255,0.95); }
+.periph-empty { text-align: center; padding: 24px; font-size: 12px; color: rgba(255,255,255,0.35); }
+
 /* Stats */
 #stats { position: fixed; top: 6px; right: 6px; z-index: 30; background: rgba(15,18,37,0.9); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; padding: 10px 14px; font-size: 10px; font-family: monospace; color: rgba(255,255,255,0.35); display: none; min-width: 180px; line-height: 1.7; }
 
@@ -194,6 +222,17 @@ body.shadow-mode .dc-destroy-btn { display: none !important; }
     <div id="upload-list"></div>
   </div>
 </div>
+<div id="periph-modal">
+  <div id="periph-backdrop" onclick="closePeripheralsModal()"></div>
+  <div id="periph-box">
+    <button id="periph-close" onclick="closePeripheralsModal()">&times;</button>
+    <button id="periph-reload" onclick="refreshPeripheralsList()" title="Reload">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 019-9 9 9 0 016.7 3M21 12a9 9 0 01-9 9 9 9 0 01-6.7-3M21 3v6h-6M3 21v-6h6"/></svg>
+    </button>
+    <h3 data-t="peripherals">T_PERIPHERALS</h3>
+    <div id="periph-list"></div>
+  </div>
+</div>
 <div id="display"></div>
 <div id="shadow-badge" data-t="shadow_mode">T_SHADOW_MODE</div>
 <div id="side-tab"><svg viewBox="0 0 24 24"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg></div>
@@ -212,6 +251,10 @@ body.shadow-mode .dc-destroy-btn { display: none !important; }
     <div class="sb-btn sb-interactive" onclick="openUploadModal()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
       <span data-t="upload_files">T_UPLOAD_FILES</span>
+    </div>
+    <div class="sb-btn sb-interactive" onclick="openPeripheralsModal()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19v-3a4 4 0 014-4h2M9 5v3M15 5v3M5 9h14M5 9a2 2 0 00-2 2v8a2 2 0 002 2h6M5 9V7a2 2 0 012-2h10a2 2 0 012 2v2M19 13v8M16 17h6"/></svg>
+      <span data-t="peripherals_redirect">T_PERIPHERALS_REDIRECT</span>
     </div>
     <div class="sb-btn sb-interactive" onclick="sendCAD()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M7 8h10M7 12h6"/></svg>
@@ -938,6 +981,157 @@ function closeConfirmModal() { document.getElementById('confirm-modal').classLis
 function openUploadModal() { document.getElementById('upload-modal').classList.add('show'); document.body.classList.remove('sb-open'); }
 function closeUploadModal() { document.getElementById('upload-modal').classList.remove('show'); }
 
+// Peripherals modal — Phase 1.0 scaffolding.
+// Lists detected media devices + already-paired WebUSB/WebHID/Gamepad with
+// real names, lets the user toggle redirection. The toggle currently only
+// emits a {ch:'peripherals',type:'enable|disable',id,kind} message on the
+// existing guacd WS so we can wire the agent backend later — actual
+// stream forwarding (webcam/mic/USB → VM) is Phase 1.1.
+var peripheralsEnabled = {}; // id -> {kind, label, stream/device handle}
+var peripheralsPermsAsked = false;
+
+async function openPeripheralsModal() {
+  document.getElementById('periph-modal').classList.add('show');
+  document.body.classList.remove('sb-open');
+  await refreshPeripheralsList();
+}
+function closePeripheralsModal() {
+  document.getElementById('periph-modal').classList.remove('show');
+}
+
+async function refreshPeripheralsList() {
+  var list = document.getElementById('periph-list');
+  list.innerHTML = '';
+
+  var hasMedia = !!(navigator.mediaDevices && navigator.mediaDevices.enumerateDevices);
+  var mediaDevs = [];
+  if (hasMedia) {
+    try { mediaDevs = await navigator.mediaDevices.enumerateDevices(); } catch (e) {}
+  }
+  var labelsRevealed = mediaDevs.some(function(d){ return d.label; });
+
+  // If we have devices but no labels yet, show an "Authorize" panel first.
+  // Browsers hide labels until at least one getUserMedia call has been
+  // accepted on this origin (anti-fingerprinting).
+  if (hasMedia && mediaDevs.length > 0 && !labelsRevealed) {
+    var perm = document.createElement('div');
+    perm.className = 'periph-perm';
+    perm.innerHTML = '<p>' + (T.periph_perm_msg || 'Allow camera and microphone to detect your devices.') + '</p>'
+      + '<button onclick="requestMediaPermission()">' + (T.periph_perm_btn || 'Authorize') + '</button>';
+    list.appendChild(perm);
+  }
+
+  // Media devices (cam/mic/speakers)
+  for (var i = 0; i < mediaDevs.length; i++) {
+    var d = mediaDevs[i];
+    if (!d.label && !labelsRevealed) continue; // skip unlabeled until perm
+    var label = d.label || (d.kind + ' ' + (i+1));
+    appendPeripheralItem('media-' + d.deviceId, d.kind, label);
+  }
+
+  // Already-paired WebUSB devices
+  if (navigator.usb) {
+    try {
+      var usbDevs = await navigator.usb.getDevices();
+      for (var j = 0; j < usbDevs.length; j++) {
+        var u = usbDevs[j];
+        var name = (u.productName || 'USB device') + (u.manufacturerName ? ' (' + u.manufacturerName + ')' : '');
+        appendPeripheralItem('usb-' + u.vendorId + '-' + u.productId + '-' + (u.serialNumber || j), 'usb', name);
+      }
+    } catch (e) {}
+  }
+
+  // Already-paired WebHID devices
+  if (navigator.hid) {
+    try {
+      var hidDevs = await navigator.hid.getDevices();
+      for (var k = 0; k < hidDevs.length; k++) {
+        var h = hidDevs[k];
+        appendPeripheralItem('hid-' + h.vendorId + '-' + h.productId + '-' + k, 'hid', h.productName || ('HID device ' + (k+1)));
+      }
+    } catch (e) {}
+  }
+
+  // Connected gamepads
+  try {
+    var gps = navigator.getGamepads ? navigator.getGamepads() : [];
+    for (var g = 0; g < gps.length; g++) {
+      if (gps[g]) appendPeripheralItem('gp-' + gps[g].index, 'gamepad', gps[g].id);
+    }
+  } catch (e) {}
+
+  // Empty state
+  if (!list.children.length) {
+    var empty = document.createElement('div');
+    empty.className = 'periph-empty';
+    empty.setAttribute('data-t', 'periph_empty');
+    empty.textContent = T.periph_empty || 'No devices detected.';
+    list.appendChild(empty);
+  }
+
+  // "+ Add USB device" picker — vendor-specific class only, OS blocks the
+  // rest (HID/CCID/audio/video/storage).
+  if (navigator.usb) {
+    var add = document.createElement('div');
+    add.className = 'periph-add';
+    add.innerHTML = '<button onclick="addUsbPeripheral()">' + (T.periph_add_usb || '+ Add USB device') + '</button>';
+    list.appendChild(add);
+  }
+}
+
+function appendPeripheralItem(id, kind, label) {
+  var list = document.getElementById('periph-list');
+  var div = document.createElement('div');
+  div.className = 'periph-item';
+  var checked = peripheralsEnabled[id] ? 'checked' : '';
+  div.innerHTML = '<span class="periph-label" title="' + label.replace(/"/g, '&quot;') + '">' + label + '</span>'
+    + '<label class="periph-toggle"><input type="checkbox" ' + checked + '><span class="periph-slider"></span></label>';
+  div.querySelector('input').addEventListener('change', function(e) {
+    togglePeripheralRedirect(id, kind, label, e.target.checked);
+  });
+  list.appendChild(div);
+}
+
+async function requestMediaPermission() {
+  try {
+    var s = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+    s.getTracks().forEach(function(t){ t.stop(); });
+  } catch (e) {
+    // Partial ok: try audio-only then video-only.
+    try { var a = await navigator.mediaDevices.getUserMedia({ audio: true }); a.getTracks().forEach(function(t){t.stop();}); } catch (_) {}
+    try { var v = await navigator.mediaDevices.getUserMedia({ video: true }); v.getTracks().forEach(function(t){t.stop();}); } catch (_) {}
+  }
+  peripheralsPermsAsked = true;
+  await refreshPeripheralsList();
+}
+
+async function addUsbPeripheral() {
+  if (!navigator.usb) return;
+  try {
+    await navigator.usb.requestDevice({ filters: [] });
+    await refreshPeripheralsList();
+  } catch (e) {
+    // user cancelled — ignore
+  }
+}
+
+function togglePeripheralRedirect(id, kind, label, on) {
+  if (on) peripheralsEnabled[id] = { kind: kind, label: label };
+  else delete peripheralsEnabled[id];
+  // Notify the agent so it can prepare a relay channel. The actual stream
+  // forwarding (Phase 1.1) will piggyback on this signal.
+  if (typeof guac !== 'undefined' && connected && guac.sendArgv) {
+    try {
+      // Use Guacamole's argument stream as a control channel — a tiny JSON
+      // notification. Agent picks it up in /guac-ws side-channel.
+      var msg = JSON.stringify({ ch: 'peripherals', type: on ? 'enable' : 'disable', id: id, kind: kind });
+      // No-op for now if Guac doesn't expose an argv writer; we'll wire a
+      // proper side WS in Phase 1.1.
+      console.log('[peripherals] ' + msg);
+    } catch (e) {}
+  }
+}
+
 function changeSetting(name, value) {
   settings[name] = value;
   saveSettings();
@@ -1073,10 +1267,10 @@ setInterval(function() {
 
 	// i18n: build JSON object for JS translations + replace HTML placeholders
 	tr := map[string]map[string]string{
-		"en": {"fullscreen": "Fullscreen", "ctrl_alt_del": "Ctrl+Alt+Del", "virtual_keyboard": "Virtual Keyboard", "remote_cursor": "Remote cursor", "upload_files": "Upload files", "upload_drop": "Drop files here or", "upload_browse": "browse", "cancel": "Cancel", "destroy_confirm_msg": "This will terminate the remote connection.", "disconnected_title": "Session disconnected", "disconnected_msg": "The remote session has been disconnected.", "reconnect": "Reconnect", "display_scale": "Display scale", "back": "Back to workspaces", "destroy": "Destroy session", "settings": "Display settings", "font_smoothing": "Font smoothing", "wallpaper": "Wallpaper", "theming": "Theming", "desktop_effects": "Desktop effects", "window_drag": "Window drag", "menu_animations": "Menu animations", "audio": "Audio", "clipboard": "Clipboard", "keyboard_layout": "Keyboard layout", "color_depth": "Color depth", "fast": "fast", "quality": "quality", "connecting": "Connecting via", "reconnecting": "Reconnecting...", "disconnected": "Disconnected.", "destroy_confirm": "Destroy this session?", "shadow_mode": "Shadow Mode", "language": "Language"},
-		"fr": {"fullscreen": "Plein \u00e9cran", "ctrl_alt_del": "Ctrl+Alt+Suppr", "virtual_keyboard": "Clavier virtuel", "remote_cursor": "Curseur distant", "upload_files": "Envoyer des fichiers", "upload_drop": "D\u00e9posez vos fichiers ici ou", "upload_browse": "parcourir", "cancel": "Annuler", "destroy_confirm_msg": "Cela mettra fin \u00e0 la connexion distante.", "disconnected_title": "Session d\u00e9connect\u00e9e", "disconnected_msg": "La session distante a \u00e9t\u00e9 d\u00e9connect\u00e9e.", "reconnect": "Reconnecter", "display_scale": "\u00c9chelle d'affichage", "back": "Retour aux workspaces", "destroy": "D\u00e9truire la session", "settings": "Param\u00e8tres d'affichage", "font_smoothing": "Lissage des polices", "wallpaper": "Fond d'\u00e9cran", "theming": "Th\u00e8me", "desktop_effects": "Effets de bureau", "window_drag": "Glisser les fen\u00eatres", "menu_animations": "Animations menus", "audio": "Audio", "clipboard": "Presse-papiers", "keyboard_layout": "Disposition clavier", "color_depth": "Profondeur couleur", "fast": "rapide", "quality": "qualit\u00e9", "connecting": "Connexion via", "reconnecting": "Reconnexion...", "disconnected": "D\u00e9connect\u00e9.", "destroy_confirm": "D\u00e9truire cette session ?", "shadow_mode": "Mode observation", "language": "Langue"},
-		"es": {"fullscreen": "Pantalla completa", "ctrl_alt_del": "Ctrl+Alt+Supr", "virtual_keyboard": "Teclado virtual", "remote_cursor": "Cursor remoto", "upload_files": "Subir archivos", "upload_drop": "Suelta archivos aqu\u00ed o", "upload_browse": "examinar", "cancel": "Cancelar", "destroy_confirm_msg": "Esto terminar\u00e1 la conexi\u00f3n remota.", "disconnected_title": "Sesi\u00f3n desconectada", "disconnected_msg": "La sesi\u00f3n remota se ha desconectado.", "reconnect": "Reconectar", "display_scale": "Escala de pantalla", "back": "Volver a workspaces", "destroy": "Destruir sesi\u00f3n", "settings": "Ajustes de pantalla", "font_smoothing": "Suavizado de fuentes", "wallpaper": "Fondo de pantalla", "theming": "Tema", "desktop_effects": "Efectos de escritorio", "window_drag": "Arrastrar ventanas", "menu_animations": "Animaciones de men\u00fa", "audio": "Audio", "clipboard": "Portapapeles", "keyboard_layout": "Disposici\u00f3n del teclado", "color_depth": "Profundidad de color", "fast": "r\u00e1pido", "quality": "calidad", "connecting": "Conectando via", "reconnecting": "Reconectando...", "disconnected": "Desconectado.", "destroy_confirm": "\u00bfDestruir esta sesi\u00f3n?", "shadow_mode": "Modo sombra", "language": "Idioma"},
-		"de": {"fullscreen": "Vollbild", "ctrl_alt_del": "Strg+Alt+Entf", "virtual_keyboard": "Bildschirmtastatur", "remote_cursor": "Remote-Cursor", "upload_files": "Dateien hochladen", "upload_drop": "Dateien hier ablegen oder", "upload_browse": "durchsuchen", "cancel": "Abbrechen", "destroy_confirm_msg": "Die Remote-Verbindung wird getrennt.", "disconnected_title": "Sitzung getrennt", "disconnected_msg": "Die Remote-Sitzung wurde getrennt.", "reconnect": "Erneut verbinden", "display_scale": "Anzeigeskalierung", "back": "Zur\u00fcck zu Workspaces", "destroy": "Sitzung zerst\u00f6ren", "settings": "Anzeigeeinstellungen", "font_smoothing": "Schriftgl\u00e4ttung", "wallpaper": "Hintergrundbild", "theming": "Design", "desktop_effects": "Desktop-Effekte", "window_drag": "Fenster ziehen", "menu_animations": "Men\u00fc-Animationen", "audio": "Audio", "clipboard": "Zwischenablage", "keyboard_layout": "Tastaturlayout", "color_depth": "Farbtiefe", "fast": "schnell", "quality": "Qualit\u00e4t", "connecting": "Verbindung \u00fcber", "reconnecting": "Verbindung wird wiederhergestellt...", "disconnected": "Getrennt.", "destroy_confirm": "Diese Sitzung zerst\u00f6ren?", "shadow_mode": "Beobachtungsmodus", "language": "Sprache"},
+		"en": {"fullscreen": "Fullscreen", "ctrl_alt_del": "Ctrl+Alt+Del", "virtual_keyboard": "Virtual Keyboard", "remote_cursor": "Remote cursor", "upload_files": "Upload files", "upload_drop": "Drop files here or", "upload_browse": "browse", "cancel": "Cancel", "destroy_confirm_msg": "This will terminate the remote connection.", "disconnected_title": "Session disconnected", "disconnected_msg": "The remote session has been disconnected.", "reconnect": "Reconnect", "display_scale": "Display scale", "back": "Back to workspaces", "destroy": "Destroy session", "settings": "Display settings", "font_smoothing": "Font smoothing", "wallpaper": "Wallpaper", "theming": "Theming", "desktop_effects": "Desktop effects", "window_drag": "Window drag", "menu_animations": "Menu animations", "audio": "Audio", "clipboard": "Clipboard", "keyboard_layout": "Keyboard layout", "color_depth": "Color depth", "fast": "fast", "quality": "quality", "connecting": "Connecting via", "reconnecting": "Reconnecting...", "disconnected": "Disconnected.", "destroy_confirm": "Destroy this session?", "shadow_mode": "Shadow Mode", "language": "Language", "peripherals": "Peripherals", "peripherals_redirect": "Peripheral redirection", "periph_perm_msg": "Allow camera and microphone to detect your devices.", "periph_perm_btn": "Authorize", "periph_add_usb": "+ Add a USB device", "periph_empty": "No devices detected."},
+		"fr": {"fullscreen": "Plein \u00e9cran", "ctrl_alt_del": "Ctrl+Alt+Suppr", "virtual_keyboard": "Clavier virtuel", "remote_cursor": "Curseur distant", "upload_files": "Envoyer des fichiers", "upload_drop": "D\u00e9posez vos fichiers ici ou", "upload_browse": "parcourir", "cancel": "Annuler", "destroy_confirm_msg": "Cela mettra fin \u00e0 la connexion distante.", "disconnected_title": "Session d\u00e9connect\u00e9e", "disconnected_msg": "La session distante a \u00e9t\u00e9 d\u00e9connect\u00e9e.", "reconnect": "Reconnecter", "display_scale": "\u00c9chelle d'affichage", "back": "Retour aux workspaces", "destroy": "D\u00e9truire la session", "settings": "Param\u00e8tres d'affichage", "font_smoothing": "Lissage des polices", "wallpaper": "Fond d'\u00e9cran", "theming": "Th\u00e8me", "desktop_effects": "Effets de bureau", "window_drag": "Glisser les fen\u00eatres", "menu_animations": "Animations menus", "audio": "Audio", "clipboard": "Presse-papiers", "keyboard_layout": "Disposition clavier", "color_depth": "Profondeur couleur", "fast": "rapide", "quality": "qualit\u00e9", "connecting": "Connexion via", "reconnecting": "Reconnexion...", "disconnected": "D\u00e9connect\u00e9.", "destroy_confirm": "D\u00e9truire cette session ?", "shadow_mode": "Mode observation", "language": "Langue", "peripherals": "P\u00e9riph\u00e9riques", "peripherals_redirect": "Redirection des p\u00e9riph\u00e9riques", "periph_perm_msg": "Autorisez l'acc\u00e8s cam\u00e9ra et micro pour d\u00e9tecter vos p\u00e9riph\u00e9riques.", "periph_perm_btn": "Autoriser", "periph_add_usb": "+ Ajouter un p\u00e9riph\u00e9rique USB", "periph_empty": "Aucun p\u00e9riph\u00e9rique d\u00e9tect\u00e9."},
+		"es": {"fullscreen": "Pantalla completa", "ctrl_alt_del": "Ctrl+Alt+Supr", "virtual_keyboard": "Teclado virtual", "remote_cursor": "Cursor remoto", "upload_files": "Subir archivos", "upload_drop": "Suelta archivos aqu\u00ed o", "upload_browse": "examinar", "cancel": "Cancelar", "destroy_confirm_msg": "Esto terminar\u00e1 la conexi\u00f3n remota.", "disconnected_title": "Sesi\u00f3n desconectada", "disconnected_msg": "La sesi\u00f3n remota se ha desconectado.", "reconnect": "Reconectar", "display_scale": "Escala de pantalla", "back": "Volver a workspaces", "destroy": "Destruir sesi\u00f3n", "settings": "Ajustes de pantalla", "font_smoothing": "Suavizado de fuentes", "wallpaper": "Fondo de pantalla", "theming": "Tema", "desktop_effects": "Efectos de escritorio", "window_drag": "Arrastrar ventanas", "menu_animations": "Animaciones de men\u00fa", "audio": "Audio", "clipboard": "Portapapeles", "keyboard_layout": "Disposici\u00f3n del teclado", "color_depth": "Profundidad de color", "fast": "r\u00e1pido", "quality": "calidad", "connecting": "Conectando via", "reconnecting": "Reconectando...", "disconnected": "Desconectado.", "destroy_confirm": "\u00bfDestruir esta sesi\u00f3n?", "shadow_mode": "Modo sombra", "language": "Idioma", "peripherals": "Perif\u00e9ricos", "peripherals_redirect": "Redirecci\u00f3n de perif\u00e9ricos", "periph_perm_msg": "Permite el acceso a c\u00e1mara y micr\u00f3fono para detectar tus dispositivos.", "periph_perm_btn": "Autorizar", "periph_add_usb": "+ A\u00f1adir dispositivo USB", "periph_empty": "Ning\u00fan dispositivo detectado."},
+		"de": {"fullscreen": "Vollbild", "ctrl_alt_del": "Strg+Alt+Entf", "virtual_keyboard": "Bildschirmtastatur", "remote_cursor": "Remote-Cursor", "upload_files": "Dateien hochladen", "upload_drop": "Dateien hier ablegen oder", "upload_browse": "durchsuchen", "cancel": "Abbrechen", "destroy_confirm_msg": "Die Remote-Verbindung wird getrennt.", "disconnected_title": "Sitzung getrennt", "disconnected_msg": "Die Remote-Sitzung wurde getrennt.", "reconnect": "Erneut verbinden", "display_scale": "Anzeigeskalierung", "back": "Zur\u00fcck zu Workspaces", "destroy": "Sitzung zerst\u00f6ren", "settings": "Anzeigeeinstellungen", "font_smoothing": "Schriftgl\u00e4ttung", "wallpaper": "Hintergrundbild", "theming": "Design", "desktop_effects": "Desktop-Effekte", "window_drag": "Fenster ziehen", "menu_animations": "Men\u00fc-Animationen", "audio": "Audio", "clipboard": "Zwischenablage", "keyboard_layout": "Tastaturlayout", "color_depth": "Farbtiefe", "fast": "schnell", "quality": "Qualit\u00e4t", "connecting": "Verbindung \u00fcber", "reconnecting": "Verbindung wird wiederhergestellt...", "disconnected": "Getrennt.", "destroy_confirm": "Diese Sitzung zerst\u00f6ren?", "shadow_mode": "Beobachtungsmodus", "language": "Sprache", "peripherals": "Peripherieger\u00e4te", "peripherals_redirect": "Peripherie-Umleitung", "periph_perm_msg": "Erlaube Kamera- und Mikrofonzugriff, um Ger\u00e4te zu erkennen.", "periph_perm_btn": "Erlauben", "periph_add_usb": "+ USB-Ger\u00e4t hinzuf\u00fcgen", "periph_empty": "Keine Ger\u00e4te erkannt."},
 	}
 
 	// Build JSON for ALL translations (embedded in JS for runtime switching)
