@@ -551,18 +551,28 @@ func main() {
 		guacdConn.Close()
 	}))
 
-	// Generic screenshot endpoint (public — works for both container and server sessions via guacd)
+	// Screenshot endpoint. Requires a valid session bearer either via
+	// `?ticket=<bearer>` (used in <img src=...>) or `Authorization: Bearer <bearer>`
+	// (used by fetch). When the bearer is missing/invalid, return a 1x1
+	// transparent PNG instead of leaking the live screenshot to anyone who
+	// guesses the session UUID.
 	app.Get("/api/screenshot/:sessionId", func(c *fiber.Ctx) error {
 		sessionID := c.Params("sessionId")
 
-		data := guacManager.GetScreenshot(sessionID)
-		if data != nil {
-			c.Set("Content-Type", "image/png")
-			return c.Send(data)
+		bearer := c.Query("ticket")
+		if bearer == "" {
+			if a := c.Get("Authorization"); strings.HasPrefix(a, "Bearer ") {
+				bearer = strings.TrimPrefix(a, "Bearer ")
+			}
 		}
-
-		// No screenshot yet — return 1x1 transparent PNG
+		_, _, valid := wsTickets.Validate(bearer, sessionID)
 		c.Set("Content-Type", "image/png")
+		if valid {
+			if data := guacManager.GetScreenshot(sessionID); data != nil {
+				return c.Send(data)
+			}
+		}
+		// No bearer / invalid bearer / no screenshot yet → 1x1 transparent PNG.
 		return c.Send([]byte{
 			0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
 			0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,

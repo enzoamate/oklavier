@@ -92,7 +92,8 @@ func mountPathAllowed(p string) bool {
 		return false
 	}
 	for _, bad := range disallowedMountPaths {
-		if clean == bad {
+		// Exact match OR child of a disallowed dir (e.g. /var/run/docker.sock).
+		if clean == bad || strings.HasPrefix(clean, bad+"/") {
 			return false
 		}
 	}
