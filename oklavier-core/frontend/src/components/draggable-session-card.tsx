@@ -10,16 +10,16 @@ interface SessionLike {
   session_id: string;
   image: { friendly_name: string; image_src: string };
   operational_status: string;
-  start_date: string | number;
-  expiration_date: string | number;
+  start_date: string;
+  expiration_date: string;
 }
 
 interface Props {
   session: SessionLike;
   index: number; // for stacked default position
   imgSrcResolver: (img: SessionLike["image"]) => string;
-  timeAgo: (d: string | number) => string;
-  timeLeft: (d: string | number) => string;
+  timeAgo: (d: string) => string;
+  timeLeft: (d: string) => string;
   onConnect: (s: SessionLike) => void;
   onDestroy: (id: string) => void;
   destroying: string | null;
