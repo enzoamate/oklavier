@@ -480,6 +480,9 @@ function setStatus(text) { document.getElementById('status').textContent = text;
 var tunnel = null;
 var guac = null;
 var connected = false;
+// Mounted as soon as guacd reports the filesystem after connect — used by
+// the upload modal AND the peripherals folder-redirect code.
+var driveObject = null;
 
 function connect() {
   setStatus(T.connecting + ' ' + PROTO.toUpperCase() + '...');
@@ -775,8 +778,9 @@ function connect() {
     stream.sendAck('OK', 0x0000);
   };
 
-  // Drive redirection: file upload via drag & drop
-  var driveObject = null;
+  // Drive redirection: file upload via drag & drop. driveObject is now a
+  // module-level global (declared above) so peripheral folder uploads can
+  // reach it too.
   guac.onfilesystem = function(object) {
     driveObject = object;
   };
@@ -1012,6 +1016,12 @@ var peripheralsExtras = []; // [{id, kind, label, handle}]
 var peripheralsMidiAccess = null;
 var peripheralsGeoEnabled = false;
 var peripheralsNfcEnabled = false;
+// Active mic recorders keyed by media deviceId — so we can stop them when
+// the user toggles a mic off without affecting the others.
+var peripheralsMicRecorders = {}; // deviceId -> {recorder, stream, mediaStream}
+// Active folder uploaders, used to track in-flight directory uploads so we
+// can show progress and cancel cleanly.
+var peripheralsFolderUploads = {}; // id -> {cancelled}
 
 async function openPeripheralsModal() {
   document.getElementById('periph-modal').classList.add('show');
@@ -1260,19 +1270,38 @@ function togglePeripheralRedirect(id, kind, label, on) {
   if (on) peripheralsEnabled[id] = { kind: kind, label: label };
   else delete peripheralsEnabled[id];
 
-  // Some kinds need a one-time permission grant on first enable.
+  // === Mic (audioinput) — wire to Guac audio-input stream ===
+  // The browser captures the user's mic via getUserMedia, then pipes raw
+  // PCM samples into a Guac audio output stream. guacd forwards those bytes
+  // to the Windows VM as RDP audio-input — Windows sees it as a 'Remote
+  // Audio' microphone with no driver to install.
+  if (kind === 'audioinput') {
+    var deviceId = id.replace(/^media-/, '');
+    if (on) startMicRedirect(deviceId, label);
+    else stopMicRedirect(deviceId);
+  }
+
+  // === Folder — sync via existing Guacamole drive ===
+  // We upload each file in the picked directory through driveObject (the
+  // 'Oklavier Drive' Z: drive in Windows), which is a folder on the agent
+  // pod that the VM mounts via RDP drive redirection.
+  if (kind === 'folder') {
+    if (on) startFolderUpload(id);
+    else stopFolderUpload(id);
+  }
+
+  // === Geolocation — one-time permission probe ===
   if (kind === 'geolocation' && on && !peripheralsGeoEnabled) {
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(function() {
         peripheralsGeoEnabled = true;
-        // Permission is now granted; subsequent enables will just relay.
       }, function() {
-        // User denied — uncheck the toggle.
         delete peripheralsEnabled[id];
         refreshPeripheralsList();
       }, { timeout: 10000 });
     }
   }
+  // === NFC — one-time scan permission ===
   if (kind === 'nfc' && on && !peripheralsNfcEnabled) {
     if ('NDEFReader' in window) {
       try {
@@ -1283,9 +1312,137 @@ function togglePeripheralRedirect(id, kind, label, on) {
     }
   }
 
-  // Notify the agent so it can prepare a relay channel. The actual stream
-  // forwarding (Phase 1.1) will piggyback on this signal.
   console.log('[peripherals] ' + JSON.stringify({ type: on ? 'enable' : 'disable', id: id, kind: kind, label: label }));
+}
+
+// Mic redirect: open a Guac audio stream and wire a RawAudioRecorder that
+// captures from the chosen deviceId. Uses 44.1 kHz mono L16 PCM — the most
+// widely-supported format for RDP audio-input.
+async function startMicRedirect(deviceId, label) {
+  if (!guac || !connected) return;
+  var mimetype = 'audio/L16;rate=44100,channels=1';
+  try {
+    // Open a Guac output stream of the right mimetype. guacd will forward
+    // it to RDP audio-input.
+    var stream = guac.createAudioStream(mimetype);
+    if (!stream) {
+      console.warn('[mic] createAudioStream returned null — server did not negotiate audio-input');
+      return;
+    }
+    // Acquire the local mic with getUserMedia using the chosen deviceId.
+    var constraints = { audio: deviceId ? { deviceId: { exact: deviceId } } : true };
+    var mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+    // Hand it to Guacamole's RawAudioRecorder which encodes PCM and writes
+    // to the stream. RawAudioRecorder uses Web Audio API internally.
+    var recorder = (Guacamole.RawAudioRecorder && Guacamole.RawAudioRecorder.getInstance)
+      ? Guacamole.RawAudioRecorder.getInstance(stream, mimetype)
+      : null;
+    if (!recorder) {
+      // Fallback if RawAudioRecorder not available — manual pipe.
+      recorder = manualMicRecorder(mediaStream, stream, mimetype);
+    }
+    peripheralsMicRecorders[deviceId] = { recorder: recorder, stream: stream, mediaStream: mediaStream };
+    console.log('[mic] started redirect: ' + label);
+  } catch (e) {
+    console.warn('[mic] start failed: ' + (e && e.message));
+    delete peripheralsEnabled['media-' + deviceId];
+    refreshPeripheralsList();
+  }
+}
+
+function stopMicRedirect(deviceId) {
+  var rec = peripheralsMicRecorders[deviceId];
+  if (!rec) return;
+  try { if (rec.recorder && rec.recorder.close) rec.recorder.close(); } catch (e) {}
+  try { if (rec.stream && rec.stream.sendEnd) rec.stream.sendEnd(); } catch (e) {}
+  try { if (rec.mediaStream) rec.mediaStream.getTracks().forEach(function(t){t.stop();}); } catch (e) {}
+  delete peripheralsMicRecorders[deviceId];
+  console.log('[mic] stopped redirect: ' + deviceId);
+}
+
+// Tiny fallback if guacamole-common-js doesn't expose RawAudioRecorder
+// (older builds). Piggybacks on a Web Audio AudioContext + ScriptProcessor.
+function manualMicRecorder(mediaStream, stream, mimetype) {
+  var AC = window.AudioContext || window.webkitAudioContext;
+  var ctx = new AC({ sampleRate: 44100 });
+  var src = ctx.createMediaStreamSource(mediaStream);
+  var proc = ctx.createScriptProcessor(4096, 1, 1);
+  var writer = new Guacamole.ArrayBufferWriter(stream);
+  proc.onaudioprocess = function(e) {
+    var input = e.inputBuffer.getChannelData(0);
+    var out = new Int16Array(input.length);
+    for (var i = 0; i < input.length; i++) {
+      var s = Math.max(-1, Math.min(1, input[i]));
+      out[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    }
+    try { writer.sendData(out.buffer); } catch (_) {}
+  };
+  src.connect(proc);
+  proc.connect(ctx.destination);
+  return { close: function(){ try { proc.disconnect(); src.disconnect(); ctx.close(); } catch(_){} } };
+}
+
+// Folder sync: walks the picked directory and uploads every file to the
+// 'Oklavier Drive' that's already mounted in the VM. One-shot copy for now;
+// bidirectional + watch-for-changes lands in a later phase.
+async function startFolderUpload(id) {
+  var entry = peripheralsExtras.find(function(x){ return x.id === id; });
+  if (!entry || !entry.handle || !driveObject) return;
+  var state = { cancelled: false };
+  peripheralsFolderUploads[id] = state;
+  try {
+    await uploadDirHandle(entry.handle, '/' + entry.handle.name, state);
+    console.log('[folder] upload finished: ' + entry.handle.name);
+  } catch (e) {
+    console.warn('[folder] upload failed: ' + (e && e.message));
+  }
+}
+
+function stopFolderUpload(id) {
+  var s = peripheralsFolderUploads[id];
+  if (s) s.cancelled = true;
+  delete peripheralsFolderUploads[id];
+}
+
+async function uploadDirHandle(dirHandle, basePath, state) {
+  // BFS so we don't blow the stack on deep trees.
+  var queue = [{ handle: dirHandle, path: basePath }];
+  while (queue.length && !state.cancelled) {
+    var cur = queue.shift();
+    for await (var entry of cur.handle.values()) {
+      if (state.cancelled) return;
+      var p = cur.path + '/' + entry.name;
+      if (entry.kind === 'directory') {
+        queue.push({ handle: entry, path: p });
+      } else {
+        var file = await entry.getFile();
+        await uploadFileToDrive(file, p);
+      }
+    }
+  }
+}
+
+function uploadFileToDrive(file, remotePath) {
+  return new Promise(function(resolve, reject) {
+    if (!driveObject) return reject(new Error('drive not ready'));
+    var stream = driveObject.createOutputStream(file.type || 'application/octet-stream', remotePath);
+    var writer = new Guacamole.ArrayBufferWriter(stream);
+    var CHUNK = 65536;
+    var offset = 0;
+    function send() {
+      var slice = file.slice(offset, offset + CHUNK);
+      var reader = new FileReader();
+      reader.onload = function() {
+        try { writer.sendData(reader.result); } catch (e) { return reject(e); }
+        offset += reader.result.byteLength;
+        if (offset < file.size) send();
+        else { try { writer.sendEnd(); } catch (_) {} resolve(); }
+      };
+      reader.onerror = function() { reject(reader.error || new Error('read error')); };
+      reader.readAsArrayBuffer(slice);
+    }
+    send();
+  });
 }
 
 function changeSetting(name, value) {

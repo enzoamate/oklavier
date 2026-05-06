@@ -416,6 +416,11 @@ func (m *Manager) buildParams(req CreateServerSessionRequest) map[string]string 
 		params["drive-name"] = "Oklavier Drive"
 		params["drive-path"] = "/tmp/guac-drive"
 		params["create-drive-path"] = "true"
+		// Microphone redirection — the browser pushes mic samples through a
+		// Guac audio output stream that guacd forwards as RDP audio-input.
+		// Toggle is exposed in the Peripherals modal; declaring the channel
+		// here just unlocks it on the wire.
+		params["enable-audio-input"] = "true"
 		// Audio is enabled by declaring MIME types in the handshake
 		// console-audio is only for admin/console RDP sessions
 	case "vnc":
