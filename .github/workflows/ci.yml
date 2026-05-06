@@ -104,12 +104,18 @@ jobs:
         run: helm lint ${{ matrix.chart }}
       - name: helm template (smoke render)
         run: |
+          # Values must satisfy the chart's `required` length floors:
+          # jwtSecret/internalSecret/encryptionKey >= 32 chars,
+          # database.password >= 16, admin.password >= 12.
           helm template test ${{ matrix.chart }} \
-            --set jwtSecret=test --set internalSecret=test \
-            --set database.password=test --set admin.password=test \
-            --set agent.name=test --set agent.token=test \
+            --set jwtSecret=ci-smoke-jwt-secret-min-32chars-aaaa \
+            --set internalSecret=ci-smoke-internal-secret-min-32chr \
+            --set encryptionKey=ci-smoke-encryption-key-min-32cha \
+            --set database.password=cismokedbpwd1234567890 \
+            --set admin.password=cismokeadminpwd \
+            --set agent.name=ci-smoke --set agent.token=ci-smoke \
             --set agent.controlPlane=https://test.example.com \
-            --set agent.jwtSecret=test \
+            --set agent.jwtSecret=ci-smoke-jwt-secret-min-32chars-aaaa \
             > /dev/null
 
   docker-build:
