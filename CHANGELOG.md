@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/enzoamate/oklavier/compare/v1.1.0...v1.1.1) (2026-05-06)
+
+
+### Bug Fixes
+
+* **ui:** harden session card drag against browser gesture hijack ([75f5e49](https://github.com/enzoamate/oklavier/commit/75f5e495d3d797b26ba8f05e2f152e50acaf33f2))
+
 ## [1.1.0](https://github.com/enzoamate/oklavier/compare/v1.0.3...v1.1.0) (2026-05-06)
 
 
