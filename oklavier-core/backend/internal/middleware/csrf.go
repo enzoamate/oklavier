@@ -52,6 +52,13 @@ func CSRFGuard(allowedOrigins []string) fiber.Handler {
 			return c.Next()
 		}
 
+		// Agent-to-core S2S: X-Agent-Token is the auth signal; AgentTokenRequired
+		// validates it on the route. Browsers cannot set this header cross-site
+		// (custom header → CORS preflight required → blocked without ACAO).
+		if c.Get("X-Agent-Token") != "" {
+			return c.Next()
+		}
+
 		// Sec-Fetch-Site: modern browser hint, can't be set by JS cross-site.
 		switch c.Get("Sec-Fetch-Site") {
 		case "same-origin", "same-site", "none":
