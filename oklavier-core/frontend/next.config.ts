@@ -32,10 +32,19 @@ const securityHeaders = [
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=()" },
   { key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains" },
+  // Cross-Origin-* isolation (browser-side defence-in-depth, ZAP baseline asks for these).
+  { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
+  { key: "Cross-Origin-Resource-Policy", value: "same-origin" },
+  // COEP omitted on purpose: `require-corp` would break the recording player
+  // that pulls guacamole-common-js from cdn.jsdelivr.net unless we set CORP
+  // headers there too. Re-enable when all third-party assets are
+  // self-hosted or carry CORP.
 ];
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  // Don't advertise the runtime — ZAP info finding 10037.
+  poweredByHeader: false,
   async headers() {
     return [{ source: "/(.*)", headers: securityHeaders }];
   },
