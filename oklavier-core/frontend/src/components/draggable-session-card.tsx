@@ -108,28 +108,58 @@ export function DraggableSessionCard({
     // Only drag from the header (data-drag-handle parent), not from buttons.
     const target = e.target as HTMLElement;
     if (target.closest("button")) return;
+    // Stop the browser from claiming this gesture (text selection, native
+    // drag-and-drop preview, horizontal swipe-to-navigate on trackpads).
+    e.preventDefault();
     dragStart.current = {
       mx: e.clientX,
       my: e.clientY,
       cx: state.pos.x,
       cy: state.pos.y,
     };
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {
+      // setPointerCapture can throw if the pointer was already released
+      // (e.g. user lifted finger between down and React batching). Safe to
+      // ignore — onPointerMove will still get the bubbled events.
+    }
   }
 
   function onPointerMove(e: React.PointerEvent) {
     if (!dragStart.current) return;
     const dx = e.clientX - dragStart.current.mx;
     const dy = e.clientY - dragStart.current.my;
-    setState((s) => ({ ...s, pos: { x: dragStart.current!.cx + dx, y: dragStart.current!.cy + dy } }));
+    // Clamp during drag so the card can never escape into territory where the
+    // browser steals the gesture (e.g. negative x triggers swipe-back on some
+    // trackpads). snapToEdge clamps to viewport on release; we apply a looser
+    // bound here so the user still gets natural feedback while dragging.
+    const w = typeof window !== "undefined" ? window.innerWidth : 9999;
+    const h = typeof window !== "undefined" ? window.innerHeight : 9999;
+    const cardW = cardRef.current?.offsetWidth ?? CARD_WIDTH;
+    const cardH = cardRef.current?.offsetHeight ?? 200;
+    const rawX = dragStart.current.cx + dx;
+    const rawY = dragStart.current.cy + dy;
+    const x = Math.max(0, Math.min(w - cardW, rawX));
+    const y = Math.max(0, Math.min(h - cardH, rawY));
+    setState((s) => ({ ...s, pos: { x, y } }));
   }
 
-  function onPointerUp(e: React.PointerEvent) {
+  function endDrag(e: React.PointerEvent, snap: boolean) {
     if (!dragStart.current) return;
     dragStart.current = null;
-    (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
-    setState((s) => ({ ...s, pos: snapToEdge(s.pos) }));
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {
+      // Pointer capture may already have been released by the browser
+      // (e.g. window blur, gesture cancel) — ignore.
+    }
+    if (snap) setState((s) => ({ ...s, pos: snapToEdge(s.pos) }));
   }
+
+  function onPointerUp(e: React.PointerEvent) { endDrag(e, true); }
+  function onPointerCancel(e: React.PointerEvent) { endDrag(e, true); }
+  function onLostPointerCapture(e: React.PointerEvent) { endDrag(e, false); }
 
   // Re-snap on window resize
   useEffect(() => {
@@ -145,12 +175,16 @@ export function DraggableSessionCard({
       className="fixed z-30 w-48 backdrop-blur-xl bg-black/40 border border-white/10 rounded-xl overflow-hidden shadow-2xl select-none"
       style={{ left: state.pos.x, top: state.pos.y, cursor: dragStart.current ? "grabbing" : "default" }}
     >
-      {/* Header — drag handle */}
+      {/* Header — drag handle. touch-action:none prevents the browser from
+          claiming the gesture for swipe-back / pull-to-refresh / scroll. */}
       <div
         className="flex items-center gap-2 p-3 cursor-grab active:cursor-grabbing"
+        style={{ touchAction: "none", overscrollBehavior: "contain" }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onPointerCancel={onPointerCancel}
+        onLostPointerCapture={onLostPointerCapture}
       >
         {session.image.image_src && (
           <img src={imgSrcResolver(session.image)} alt="" className="size-8 rounded pointer-events-none" />
