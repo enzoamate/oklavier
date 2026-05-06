@@ -155,17 +155,24 @@ func (h *SessionHandler) GetUserSessions(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"sessions": []interface{}{}})
 	}
 
+	userRole, _ := c.Locals("user_role").(string)
 	result := make([]fiber.Map, len(sessions))
 	for i, s := range sessions {
-		// Get agent public_url if available
-		var agentPublicURL string
+		// Get agent public_url + endpoint + token (need endpoint+token to mint
+		// a bearer for the dashboard's <img src> screenshot preview).
+		var agentPublicURL, agentEndpoint, agentToken string
 		if s.AgentID != "" {
-			h.DB.Get(&agentPublicURL, "SELECT COALESCE(public_url, '') FROM agent WHERE id = $1", s.AgentID)
+			h.DB.QueryRow(`SELECT COALESCE(public_url, ''), COALESCE(endpoint, ''), token FROM agent WHERE id = $1`, s.AgentID).
+				Scan(&agentPublicURL, &agentEndpoint, &agentToken)
 		}
-		_ = c.Locals("user_role")
-		// SECURITY: session_token is no longer minted in the list. Clients must
-		// call POST /api/session/connect to obtain a fresh short-lived bearer
-		// just before opening the viewer.
+		// Mint a short-lived bearer (5 min, scoped to this session, admitted
+		// to the agent S2S) so the dashboard can request the screenshot
+		// thumbnail from /api/screenshot/:sid?ticket=<bearer>. The bearer is
+		// opaque random, NOT a JWT, and is revoked when the session is destroyed.
+		var bearer string
+		if agentEndpoint != "" {
+			bearer, _ = mintAndAdmitBearer(agentEndpoint, agentToken, s.ID, userID, userRole)
+		}
 		result[i] = fiber.Map{
 			"session_id":         s.ID,
 			"operational_status": s.Status,
@@ -177,6 +184,7 @@ func (h *SessionHandler) GetUserSessions(c *fiber.Ctx) error {
 			"agent_vnc_url":      agentPublicURL,
 			"session_type":       s.SessionType,
 			"workspace_type":     s.WorkspaceType,
+			"session_token":      bearer,
 			"image": fiber.Map{
 				"image_id":      s.WorkspaceID,
 				"friendly_name": s.ImageName,
