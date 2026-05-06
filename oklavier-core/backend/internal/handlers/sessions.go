@@ -155,24 +155,17 @@ func (h *SessionHandler) GetUserSessions(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"sessions": []interface{}{}})
 	}
 
-	userRole, _ := c.Locals("user_role").(string)
 	result := make([]fiber.Map, len(sessions))
 	for i, s := range sessions {
-		// Get agent public_url + endpoint + token (need endpoint+token to mint
-		// a bearer for the dashboard's <img src> screenshot preview).
-		var agentPublicURL, agentEndpoint, agentToken string
+		// Get agent public_url if available
+		var agentPublicURL string
 		if s.AgentID != "" {
-			h.DB.QueryRow(`SELECT COALESCE(public_url, ''), COALESCE(endpoint, ''), token FROM agent WHERE id = $1`, s.AgentID).
-				Scan(&agentPublicURL, &agentEndpoint, &agentToken)
+			h.DB.Get(&agentPublicURL, "SELECT COALESCE(public_url, '') FROM agent WHERE id = $1", s.AgentID)
 		}
-		// Mint a short-lived bearer (5 min, scoped to this session, admitted
-		// to the agent S2S) so the dashboard can request the screenshot
-		// thumbnail from /api/screenshot/:sid?ticket=<bearer>. The bearer is
-		// opaque random, NOT a JWT, and is revoked when the session is destroyed.
-		var bearer string
-		if agentEndpoint != "" {
-			bearer, _ = mintAndAdmitBearer(agentEndpoint, agentToken, s.ID, userID, userRole)
-		}
+		// SECURITY: no bearer is minted at list time. The dashboard fetches
+		// the screenshot thumbnail through GET /api/sessions/:id/screenshot
+		// (proxied by the core, owner-checked via the user cookie). The bearer
+		// is server-side only — the browser never holds it.
 		result[i] = fiber.Map{
 			"session_id":         s.ID,
 			"operational_status": s.Status,
@@ -184,7 +177,6 @@ func (h *SessionHandler) GetUserSessions(c *fiber.Ctx) error {
 			"agent_vnc_url":      agentPublicURL,
 			"session_type":       s.SessionType,
 			"workspace_type":     s.WorkspaceType,
-			"session_token":      bearer,
 			"image": fiber.Map{
 				"image_id":      s.WorkspaceID,
 				"friendly_name": s.ImageName,
@@ -740,6 +732,80 @@ func (h *SessionHandler) DestroySession(c *fiber.Ctx) error {
 	h.DB.DeleteSession(req.SessionID)
 	h.DB.LogAudit(userID, "", "destroy", "session", req.SessionID, "", c.IP())
 	return c.JSON(fiber.Map{"status": "ok"})
+}
+
+// GetSessionScreenshot returns the JPEG/PNG thumbnail for a session the
+// caller owns. The bearer used to authenticate against the agent is minted
+// and admitted server-side and is never sent to the browser. The caller
+// authenticates via the standard user cookie (AuthRequired upstream).
+func (h *SessionHandler) GetSessionScreenshot(c *fiber.Ctx) error {
+	sessionID := c.Params("sessionId")
+	authUserID, _ := c.Locals("user_id").(string)
+	authRole, _ := c.Locals("user_role").(string)
+	if sessionID == "" || authUserID == "" {
+		return c.Status(401).JSON(fiber.Map{"error": "Not authenticated"})
+	}
+
+	session, err := h.DB.GetSession(sessionID)
+	if err != nil {
+		// Don't leak existence — return placeholder PNG so callers see the
+		// same response whether the session exists or not.
+		return sendPlaceholderPNG(c)
+	}
+	if authRole != "admin" && session.UserID != authUserID {
+		return sendPlaceholderPNG(c)
+	}
+	if session.AgentID == "" {
+		return sendPlaceholderPNG(c)
+	}
+
+	var agentEndpoint, agentToken string
+	h.DB.QueryRow("SELECT endpoint, token FROM agent WHERE id = $1", session.AgentID).
+		Scan(&agentEndpoint, &agentToken)
+	if agentEndpoint == "" {
+		return sendPlaceholderPNG(c)
+	}
+
+	bearer, err := mintAndAdmitBearer(agentEndpoint, agentToken, session.ID, session.UserID, authRole)
+	if err != nil {
+		return sendPlaceholderPNG(c)
+	}
+
+	// Fetch the screenshot from the agent. The bearer is in a header so it
+	// doesn't appear in agent access logs.
+	url := fmt.Sprintf("%s/api/screenshot/%s", strings.TrimRight(agentEndpoint, "/"), session.ID)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return sendPlaceholderPNG(c)
+	}
+	req.Header.Set("Authorization", "Bearer "+bearer)
+	resp, err := agentHTTPClient.Do(req)
+	if err != nil {
+		return sendPlaceholderPNG(c)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return sendPlaceholderPNG(c)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	c.Set("Content-Type", "image/png")
+	c.Set("Cache-Control", "no-store")
+	return c.Send(body)
+}
+
+// 1x1 transparent PNG, served when the caller can't see this session.
+var placeholderPNG = []byte{
+	0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+	0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+	0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x62, 0x00, 0x00, 0x00, 0x02,
+	0x00, 0x01, 0xE5, 0x27, 0xDE, 0xFC, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42,
+	0x60, 0x82,
+}
+
+func sendPlaceholderPNG(c *fiber.Ctx) error {
+	c.Set("Content-Type", "image/png")
+	c.Set("Cache-Control", "no-store")
+	return c.Send(placeholderPNG)
 }
 
 // ConnectSession mints a fresh short-lived session bearer for an existing

@@ -865,6 +865,10 @@ func main() {
 	authenticated.Post("/destroy_session", sessionHandler.DestroySession)
 	authenticated.Post("/session_readiness", sessionHandler.GetSessionReadiness)
 	authenticated.Post("/session/connect", sessionHandler.ConnectSession)
+	// Server-side proxy for the dashboard screenshot thumbnails. The bearer
+	// used to fetch from the agent is minted+admitted server-side; the
+	// browser only sees the PNG bytes after an ownership check on the cookie.
+	authenticated.Get("/sessions/:sessionId/screenshot", sessionHandler.GetSessionScreenshot)
 
 	// Workspace favorites
 	authenticated.Post("/favorites", func(c *fiber.Ctx) error {

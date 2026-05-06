@@ -406,7 +406,7 @@ export default function WorkspacesPage() {
               </div>
               <div className="mx-2 mb-2 rounded-lg bg-white/5 aspect-video flex items-center justify-center relative overflow-hidden">
                 <img
-                  src={session.agent_vnc_url ? `https://${session.agent_vnc_url}/api/screenshot/${session.session_id}?width=400&height=225${(session as { session_token?: string }).session_token ? `&ticket=${encodeURIComponent((session as { session_token?: string }).session_token!)}` : ``}` : ``}
+                  src={`/api/sessions/${encodeURIComponent(session.session_id)}/screenshot`}
                   alt=""
                   className="w-full h-full object-cover"
                   onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
