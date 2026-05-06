@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Minus, Maximize2 as Restore, X, Play, Trash2, Maximize2, Copy, Loader2, Monitor } from "lucide-react";
+import { Minus, Maximize2 as Restore, X, Play, Trash2, Maximize2, Loader2, Monitor } from "lucide-react";
 
 type Position = { x: number; y: number };
 type CardState = { pos: Position; minimized: boolean };
@@ -192,7 +192,6 @@ export function DraggableSessionCard({
             <button onClick={() => onConnect(session)} className="flex-1 flex items-center justify-center py-2.5 text-oklavier-blue hover:bg-white/5 transition-colors" title="Open"><Play className="size-4" /></button>
             <button onClick={() => onDestroy(session.session_id)} className="flex-1 flex items-center justify-center py-2.5 text-white/50 hover:bg-white/5 transition-colors" title="Destroy"><Trash2 className="size-4" /></button>
             <button onClick={() => { window.location.href = `/sessions/${session.session_id}`; }} className="flex-1 flex items-center justify-center py-2.5 text-white/50 hover:bg-white/5 transition-colors" title="Fullscreen"><Maximize2 className="size-4" /></button>
-            <button onClick={() => navigator.clipboard?.writeText(window.location.origin + "/sessions/" + session.session_id)} className="flex-1 flex items-center justify-center py-2.5 text-white/50 hover:bg-white/5 transition-colors" title="Copy link"><Copy className="size-4" /></button>
           </div>
         </>
       )}
