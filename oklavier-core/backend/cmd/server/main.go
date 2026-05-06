@@ -18,6 +18,8 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
+	"github.com/gofiber/fiber/v2/middleware/requestid"
+	"github.com/gofiber/fiber/v2/utils"
 	"golang.org/x/crypto/bcrypt"
 	"oklavier-api/internal/agent"
 	"oklavier-api/internal/auth"
@@ -26,6 +28,7 @@ import (
 	"oklavier-api/internal/handlers"
 	"oklavier-api/internal/metrics"
 	"oklavier-api/internal/middleware"
+	mtlsLib "oklavier-api/internal/mtls"
 )
 
 func getEnv(key, fallback string) string {
@@ -438,7 +441,18 @@ func main() {
 		BodyLimit: 10 * 1024 * 1024, // 10MB max request body
 	})
 
-	app.Use(logger.New())
+	// Structured JSON logs with request_id (correlated to handler logs by Locals).
+	// SECURITY: format excludes ${queryParams} and ${body} so secrets and bearers
+	// (in URL or body) never reach the access log.
+	app.Use(requestid.New(requestid.Config{
+		Header:     "X-Request-ID",
+		Generator:  utils.UUIDv4,
+		ContextKey: "request_id",
+	}))
+	app.Use(logger.New(logger.Config{
+		Format:     `{"ts":"${time}","level":"info","status":${status},"method":"${method}","path":"${route}","ip":"${ip}","ua":"${ua}","latency_ms":${latency},"req_id":"${locals:request_id}"}` + "\n",
+		TimeFormat: "2006-01-02T15:04:05.000Z07:00",
+	}))
 	app.Use(middleware.SecurityHeaders())
 	app.Use(middleware.InternalOnly())
 	// CSRF defense: reject cross-site state-changing requests. Cookies use
@@ -2354,7 +2368,14 @@ func main() {
 	}()
 
 	log.Printf("Oklavier API starting on %s", listenAddr)
-	log.Fatal(app.Listen(listenAddr))
+	if tlsCfg, err := mtlsLib.ServerConfig(); err != nil {
+		log.Fatalf("mtls config: %v", err)
+	} else if tlsCfg != nil {
+		log.Printf("mTLS enabled (peer must present a client certificate signed by %s)", os.Getenv("MTLS_CA_FILE"))
+		log.Fatal(app.ListenMutualTLSWithCertificate(listenAddr, tlsCfg.Certificates[0], tlsCfg.ClientCAs))
+	} else {
+		log.Fatal(app.Listen(listenAddr))
+	}
 }
 
 func cleanupExpiredSessions(database *db.DB) {

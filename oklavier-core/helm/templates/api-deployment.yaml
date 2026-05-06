@@ -84,10 +84,24 @@ spec:
                   key: encryption-key
             - name: VALKEY_URL
               value: "oklavier-valkey:6379"
+            {{- if .Values.mtls.enabled }}
+            - name: MTLS_CERT_FILE
+              value: /mtls/tls.crt
+            - name: MTLS_KEY_FILE
+              value: /mtls/tls.key
+            - name: MTLS_CA_FILE
+              value: /mtls/ca.crt
+            {{- end }}
             {{- range $k, $v := .Values.api.env }}
             - name: {{ $k }}
               value: {{ $v | quote }}
             {{- end }}
+          {{- if .Values.mtls.enabled }}
+          volumeMounts:
+            - name: mtls
+              mountPath: /mtls
+              readOnly: true
+          {{- end }}
           resources:
             {{- toYaml .Values.api.resources | nindent 12 }}
           livenessProbe:
@@ -102,6 +116,12 @@ spec:
               port: 8080
             initialDelaySeconds: 3
             periodSeconds: 10
+      {{- if .Values.mtls.enabled }}
+      volumes:
+        - name: mtls
+          secret:
+            secretName: {{ required "mtls.secretName must be set when mtls.enabled" .Values.mtls.secretName }}
+      {{- end }}
 ---
 apiVersion: v1
 kind: Service

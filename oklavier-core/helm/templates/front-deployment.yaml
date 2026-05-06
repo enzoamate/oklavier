@@ -57,17 +57,17 @@ kind: Service
 metadata:
   name: oklavier-front
   namespace: {{ include "oklavier.namespace" . }}
-  {{- with .Values.front.service.annotations }}
+  {{- with .Values.front.service }}{{- with .annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
-  {{- end }}
+  {{- end }}{{- end }}
 spec:
-  type: {{ .Values.front.service.type | default "ClusterIP" }}
-  {{- with .Values.front.service.loadBalancerIP }}
+  type: {{ (.Values.front.service).type | default "ClusterIP" }}
+  {{- with (.Values.front.service).loadBalancerIP }}
   loadBalancerIP: {{ . }}
   {{- end }}
   selector:
     app: oklavier-front
   ports:
-    - port: {{ .Values.front.service.port | default 80 }}
+    - port: {{ (.Values.front.service).port | default 80 }}
       targetPort: 3000

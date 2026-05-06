@@ -15,12 +15,12 @@ var internalOnlyPublicPrefixes = []string{
 	"/health",
 	"/metrics",
 	"/api/health",
-	"/api/agent/",          // X-Agent-Token authenticated; called by remote agents
-	"/proxy/ws/",           // WebSocket proxy; auth handled by agent
-	"/api/auth/oidc/",      // OIDC redirect comes back from the IdP directly, not via the BFF
-	"/api/auth/providers",  // public listing of OIDC providers (login screen)
-	"/api/login_settings",  // public branding
-	"/api/branding",        // public branding
+	"/api/agent/",         // X-Agent-Token authenticated; called by remote agents
+	"/proxy/ws/",          // WebSocket proxy; auth handled by agent
+	"/api/auth/oidc/",     // OIDC redirect comes back from the IdP directly, not via the BFF
+	"/api/auth/providers", // public listing of OIDC providers (login screen)
+	"/api/login_settings", // public branding
+	"/api/branding",       // public branding
 }
 
 // InternalOnly validates that the request comes from the Next.js proxy

@@ -24,16 +24,65 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
+	"github.com/gofiber/fiber/v2/middleware/requestid"
+	"github.com/gofiber/fiber/v2/utils"
 	"oklavier-agent/internal/guacamole"
 	"oklavier-agent/internal/heartbeat"
+	mtlsLib "oklavier-agent/internal/mtls"
 	"oklavier-agent/internal/provisioner"
 )
+
+// coreHTTPClient is the singleton http.Client used for agent→core calls
+// (heartbeat, recording-uploaded, destroy-session, etc.). Honors MTLS_* env.
+var coreHTTPClient = func() *http.Client {
+	transport, err := mtlsLib.ClientTransport()
+	if err != nil {
+		log.Printf("mtls client transport disabled: %v", err)
+		return &http.Client{Timeout: 10 * time.Second}
+	}
+	if transport == nil {
+		return &http.Client{Timeout: 10 * time.Second}
+	}
+	return &http.Client{Timeout: 10 * time.Second, Transport: transport}
+}()
 
 var agentLogBuffer []string
 var agentLogMu sync.Mutex
 
 // uuidRe matches the canonical UUID form produced by uuid.New().String().
 var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// recordingSweeper periodically deletes recording files older than maxAge.
+// It is a safety net for the local-storage case: when S3 is configured,
+// processRecording deletes the file as soon as the upload finishes.
+// Without the sweeper, an agent that runs for months on the local PVC
+// would eventually fill up — DoS storage.
+func recordingSweeper(dir string, maxAge, interval time.Duration) {
+	for {
+		now := time.Now()
+		entries, err := os.ReadDir(dir)
+		if err == nil {
+			for _, e := range entries {
+				if e.IsDir() {
+					continue
+				}
+				info, err := e.Info()
+				if err != nil {
+					continue
+				}
+				if now.Sub(info.ModTime()) > maxAge {
+					p := filepath.Join(dir, e.Name())
+					if err := os.Remove(p); err != nil {
+						log.Printf("[recordingSweeper] failed to remove %s: %v", p, err)
+					} else {
+						log.Printf("[recordingSweeper] removed %s (age=%v)", p, now.Sub(info.ModTime()).Round(time.Hour))
+					}
+				}
+			}
+		}
+		time.Sleep(interval)
+	}
+}
 
 // sessionBearer is a session-scoped credential that replaces the previous
 // long-lived (2-hour) JWT carried in `#fragment` / `?token=` between the
@@ -212,7 +261,7 @@ func processRecording(recordingPath, sessionID, userID, workspaceName, s3Endpoin
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Agent-Token", agentToken)
-	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	resp, err := coreHTTPClient.Do(req)
 	if err != nil {
 		log.Printf("[Recording] Failed to notify core: %v", err)
 		return
@@ -297,18 +346,35 @@ func main() {
 	hb := heartbeat.New(controlPlane, agentToken, agentName, region, namespace, publicURL, prov, guacManager)
 	go hb.Start()
 
+	// Recording retention sweeper. Removes /tmp/guac-recordings files older
+	// than RECORDING_RETENTION_DAYS (default 7). Recordings uploaded to S3
+	// are deleted by processRecording immediately; this is the safety net for
+	// the local-storage path so the PVC doesn't fill up.
+	retentionDays := 7
+	if v := os.Getenv("RECORDING_RETENTION_DAYS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			retentionDays = n
+		}
+	}
+	go recordingSweeper("/tmp/guac-recordings", time.Duration(retentionDays)*24*time.Hour, 1*time.Hour)
+
 	// HTTP server for control plane commands
 	app := fiber.New(fiber.Config{
 		AppName:      "Oklavier Agent",
 		ServerHeader: "oklavier-agent",
 		BodyLimit:    10 * 1024 * 1024, // 10MB max
 	})
-	// SECURITY: ${path} in Fiber v2 includes the query string, which leaks
-	// session JWT tokens passed via `?token=` (WebSocket upgrades). Use
-	// ${url} stripped via a custom format + ${route} so logs identify the
-	// matched route without echoing user-supplied query params.
+	// Structured JSON logs. ${route} is intentional (not ${path}) to avoid
+	// leaking ?ticket=, ?token= and other query-string secrets to the log
+	// buffer that /api/logs exposes.
+	app.Use(requestid.New(requestid.Config{
+		Header:     "X-Request-ID",
+		Generator:  utils.UUIDv4,
+		ContextKey: "request_id",
+	}))
 	app.Use(logger.New(logger.Config{
-		Format: "${time} | ${status} | ${latency} | ${method} | ${route}\n",
+		Format:     `{"ts":"${time}","level":"info","status":${status},"method":"${method}","path":"${route}","ip":"${ip}","latency_ms":${latency},"req_id":"${locals:request_id}"}` + "\n",
+		TimeFormat: "2006-01-02T15:04:05.000Z07:00",
 	}))
 	// CORS: allow only the frontend URL and the agent's own domain
 	allowedOrigins := frontendURL
@@ -443,8 +509,7 @@ func main() {
 			}
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("X-Agent-Token", agentToken)
-			client := &http.Client{Timeout: 10 * time.Second}
-			resp, err := client.Do(req)
+			resp, err := coreHTTPClient.Do(req)
 			if err != nil {
 				log.Printf("[Viewer] Failed to notify core: %v", err)
 				return
@@ -744,7 +809,14 @@ func main() {
 
 	log.Printf("Oklavier Agent '%s' (region: %s) starting on %s", agentName, region, listenAddr)
 	log.Printf("Control plane: %s", controlPlane)
-	log.Fatal(app.Listen(listenAddr))
+	if tlsCfg, err := mtlsLib.ServerConfig(); err != nil {
+		log.Fatalf("mtls config: %v", err)
+	} else if tlsCfg != nil {
+		log.Printf("mTLS enabled (peer must present a client certificate signed by %s)", os.Getenv("MTLS_CA_FILE"))
+		log.Fatal(app.ListenMutualTLSWithCertificate(listenAddr, tlsCfg.Certificates[0], tlsCfg.ClientCAs))
+	} else {
+		log.Fatal(app.Listen(listenAddr))
+	}
 }
 
 func sessionViewerHTML(sessionID, agentName, controlPlaneURL string) string {

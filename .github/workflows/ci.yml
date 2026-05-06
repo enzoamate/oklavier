@@ -42,6 +42,14 @@ jobs:
         working-directory: ${{ matrix.component }}
         run: go test -race -count=1 -coverprofile=coverage.out ./...
 
+      - name: gosec — fail on HIGH+
+        uses: securego/gosec@master
+        with:
+          # -severity high: fail only on HIGH and CRITICAL
+          # -confidence medium: skip very-low-confidence noise
+          # -exclude-dir: skip vendored/test fixtures
+          args: -severity high -confidence medium ./${{ matrix.component }}/...
+
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:

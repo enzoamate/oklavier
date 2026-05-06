@@ -56,6 +56,14 @@ admin:
   email: "admin@oklavier.local"
   password: ""
 
+# Mutual TLS for agent ↔ core (opt-in defense in depth).
+# When enabled, mount an existing secret containing tls.crt + tls.key + ca.crt
+# (e.g. produced by cert-manager Certificate resource) and the API will refuse
+# any /api/agent/* call that doesn't present a client cert signed by ca.crt.
+mtls:
+  enabled: false
+  secretName: ""
+
 # JWT secret for API tokens (>= 32 chars). Auto-generated if empty AND no
 # pre-existing oklavier-secrets is found in the cluster.
 jwtSecret: ""

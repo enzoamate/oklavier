@@ -12,6 +12,12 @@ agent:
   valkeyURL: "oklavier-valkey.oklavier.svc.cluster.local:6379"
   guacdAddress: "guacd:4822"
 
+# Opt-in mutual TLS for agent ↔ core. When enabled, the secret must contain
+# tls.crt + tls.key + ca.crt (typical cert-manager Certificate output).
+mtls:
+  enabled: false
+  secretName: ""
+
 image:
   repository: ghcr.io/enzoamate/oklavier-agent
   tag: latest
@@ -63,6 +69,16 @@ recordings:
     enabled: true
     size: 10Gi
     storageClass: ""
+  # Local sweeper deletes /tmp/guac-recordings files older than this. Off-cluster
+  # deployments that upload to S3 don't need this; it's the safety net for the
+  # storage_type=local case.
+  retentionDays: 7
+
+# Default-deny NetworkPolicy on workspace pods (lateral movement protection).
+# Off by default for backwards compatibility — enable in production.
+networkPolicy:
+  enabled: false
+  extraEgress: []
 
 imagePullSecret:
   enabled: false

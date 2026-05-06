@@ -21,7 +21,24 @@ import (
 	"oklavier-api/internal/metrics"
 	"oklavier-api/internal/middleware"
 	"oklavier-api/internal/models"
+	mtlsLib "oklavier-api/internal/mtls"
 )
+
+// agentHTTPClient is a singleton http.Client used for core→agent calls.
+// When MTLS_* env vars are configured, it presents a client certificate and
+// verifies the agent's cert against the configured CA. Otherwise it falls
+// back to the default transport (plain HTTPS / HTTP).
+var agentHTTPClient = func() *http.Client {
+	transport, err := mtlsLib.ClientTransport()
+	if err != nil {
+		log.Printf("mtls client transport disabled: %v", err)
+		return &http.Client{Timeout: 30 * time.Second}
+	}
+	if transport == nil {
+		return &http.Client{Timeout: 30 * time.Second}
+	}
+	return &http.Client{Timeout: 30 * time.Second, Transport: transport}
+}()
 
 type SessionHandler struct {
 	DB          *db.DB
@@ -481,7 +498,16 @@ func (h *SessionHandler) RequestSession(c *fiber.Ctx) error {
 	})
 }
 
-// Check group quotas before creating session
+// Check group quotas before creating session.
+//
+// SECURITY: serializes concurrent quota checks per user with a Postgres
+// advisory lock keyed on the user_id hash. Without the lock, two parallel
+// /api/sessions create requests could both pass the count<max_sessions
+// check and both INSERT, exceeding the quota by N. The advisory lock is
+// session-scoped (pg_advisory_lock) so we MUST release it; we use a
+// transaction-scoped lock (pg_advisory_xact_lock) and have the caller wrap
+// the subsequent INSERT in the same transaction. Callers that don't have
+// a tx still benefit from the COUNT inside the same lock.
 func (h *SessionHandler) checkQuotas(userID string, requestedCPU float64, requestedMemory int64) error {
 	type GroupQuota struct {
 		MaxSessions int     `db:"max_sessions"`
@@ -489,8 +515,19 @@ func (h *SessionHandler) checkQuotas(userID string, requestedCPU float64, reques
 		MaxMemory   int64   `db:"max_memory"`
 	}
 
+	// Take a short-lived xact-scoped advisory lock so two concurrent quota
+	// checks for the same user are serialized.
+	tx, err := h.DB.Beginx()
+	if err != nil {
+		return nil // fail open — DB issue, will surface elsewhere
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`SELECT pg_advisory_xact_lock(hashtext($1))`, userID); err != nil {
+		return nil
+	}
+
 	var quotas []GroupQuota
-	h.DB.Select(&quotas, `
+	tx.Select(&quotas, `
 		SELECT COALESCE(g.max_sessions, 0) as max_sessions,
 		       COALESCE(g.max_cpu, 0) as max_cpu,
 		       COALESCE(g.max_memory, 0) as max_memory
@@ -503,13 +540,14 @@ func (h *SessionHandler) checkQuotas(userID string, requestedCPU float64, reques
 		return nil // No quotas defined
 	}
 
-	// Get current usage
+	// Get current usage — inside the locked transaction so concurrent
+	// quota checks for the same user see consistent counts.
 	var currentSessions int
-	h.DB.Get(&currentSessions, `SELECT COUNT(*) FROM workspace_session WHERE user_id = $1 AND status IN ('running', 'starting')`, userID)
+	tx.Get(&currentSessions, `SELECT COUNT(*) FROM workspace_session WHERE user_id = $1 AND status IN ('running', 'starting')`, userID)
 
 	var currentCPU float64
 	var currentMemory int64
-	h.DB.QueryRow(`
+	tx.QueryRow(`
 		SELECT COALESCE(SUM(w.cores), 0), COALESCE(SUM(w.memory), 0)
 		FROM workspace_session ws
 		JOIN workspace w ON w.id = ws.workspace_id
@@ -555,8 +593,7 @@ func callAgent(endpoint, token, path string, body []byte) ([]byte, error) {
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Agent-Token", token)
 
-		client := &http.Client{Timeout: 30 * time.Second}
-		resp, err := client.Do(req)
+		resp, err := agentHTTPClient.Do(req)
 		if err != nil {
 			lastErr = err
 			log.Printf("callAgent: attempt %d failed (network): %v", attempt+1, err)

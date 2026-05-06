@@ -30,6 +30,11 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        {{- if .Values.mtls.enabled }}
+        - name: mtls
+          secret:
+            secretName: {{ required "mtls.secretName must be set when mtls.enabled" .Values.mtls.secretName }}
+        {{- end }}
       containers:
         - name: agent
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -42,7 +47,22 @@ spec:
           volumeMounts:
             - name: recordings
               mountPath: /tmp/guac-recordings
+            {{- if .Values.mtls.enabled }}
+            - name: mtls
+              mountPath: /mtls
+              readOnly: true
+            {{- end }}
           env:
+            {{- if .Values.mtls.enabled }}
+            - name: MTLS_CERT_FILE
+              value: /mtls/tls.crt
+            - name: MTLS_KEY_FILE
+              value: /mtls/tls.key
+            - name: MTLS_CA_FILE
+              value: /mtls/ca.crt
+            {{- end }}
+            - name: RECORDING_RETENTION_DAYS
+              value: {{ .Values.recordings.retentionDays | default 7 | quote }}
             - name: OKLAVIER_AGENT_NAME
               value: {{ required "agent.name is required" .Values.agent.name | quote }}
             - name: OKLAVIER_AGENT_TOKEN

@@ -1,0 +1,69 @@
+{{- if .Values.networkPolicy.enabled }}
+{{/*
+Default-deny + scoped allowlist for workspace session pods.
+A workspace pod (label: app=oklavier-session) can:
+  - egress to kube-dns (UDP 53) so DNS works,
+  - egress to the agent + guacd in the same namespace,
+  - reach the per-workspace registry pull (handled by kubelet, not pod-network),
+  - NOT talk to other workspace pods (lateral movement blocked),
+  - NOT reach cluster-internal services in other namespaces (incl. core API),
+  - NOT reach the cloud metadata IP (169.254.169.254) — covered by the egress
+    allowlist (only kube-dns + agent + guacd are allowed).
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: oklavier-session-default-deny
+  namespace: {{ include "oklavier-agent.namespace" . }}
+  labels:
+    {{- include "oklavier-agent.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: oklavier-session
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow guacd / agent in the same namespace to reach the workspace pod
+    # on its VNC/audio/uploads ports.
+    - from:
+        - podSelector:
+            matchLabels:
+              app: oklavier-agent
+        - podSelector:
+            matchLabels:
+              app: guacd
+      ports:
+        - port: 5900
+          protocol: TCP
+        - port: 6901
+          protocol: TCP
+        - port: 4901
+          protocol: TCP
+        - port: 4902
+          protocol: TCP
+  egress:
+    # Allow DNS (any pod in kube-system labelled k8s-app=kube-dns).
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Allow workspace → agent + guacd (in the same namespace).
+    - to:
+        - podSelector:
+            matchLabels:
+              app: oklavier-agent
+        - podSelector:
+            matchLabels:
+              app: guacd
+{{- if .Values.networkPolicy.extraEgress }}
+{{ toYaml .Values.networkPolicy.extraEgress | indent 4 }}
+{{- end }}
+{{- end }}
