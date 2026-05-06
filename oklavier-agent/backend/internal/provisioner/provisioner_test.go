@@ -40,8 +40,8 @@ func TestMountPathAllowed(t *testing.T) {
 		{"", false},
 		{"/etc/", false}, // trailing slash on a forbidden exact match
 		// Names that *contain* a forbidden path as substring but aren't a child:
-		{"/etcetera", true},          // not /etc nor child of /etc
-		{"/data/var/secrets", true},  // /var only forbidden at root
+		{"/etcetera", true},         // not /etc nor child of /etc
+		{"/data/var/secrets", true}, // /var only forbidden at root
 	}
 
 	for _, tc := range cases {

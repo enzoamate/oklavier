@@ -40,13 +40,13 @@ func TestCSRFGuard(t *testing.T) {
 	allowed := []string{"https://oklavier.k0be.io"}
 
 	cases := []struct {
-		name    string
-		method  string
-		origin  string
-		site    string
-		auth    string
-		cookie  string
-		want    int
+		name   string
+		method string
+		origin string
+		site   string
+		auth   string
+		cookie string
+		want   int
 	}{
 		// Safe methods are never blocked.
 		{"GET no signals", "GET", "", "", "", "", 200},
