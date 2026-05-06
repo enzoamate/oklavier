@@ -28,13 +28,15 @@ spec:
             - containerPort: 3000
               protocol: TCP
           env:
-            - name: OKLAVIER_API
-              value: {{ .Values.front.env.OKLAVIER_API | quote }}
             - name: OKLAVIER_INTERNAL_SECRET
               valueFrom:
                 secretKeyRef:
                   name: oklavier-secrets
                   key: internal-secret
+            {{- range $k, $v := .Values.front.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
           resources:
             {{- toYaml .Values.front.resources | nindent 12 }}
           livenessProbe:
@@ -55,9 +57,17 @@ kind: Service
 metadata:
   name: oklavier-front
   namespace: {{ include "oklavier.namespace" . }}
+  {{- with .Values.front.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
+  type: {{ .Values.front.service.type | default "ClusterIP" }}
+  {{- with .Values.front.service.loadBalancerIP }}
+  loadBalancerIP: {{ . }}
+  {{- end }}
   selector:
     app: oklavier-front
   ports:
-    - port: 80
+    - port: {{ .Values.front.service.port | default 80 }}
       targetPort: 3000
