@@ -6,12 +6,23 @@ import { Minus, Maximize2 as Restore, X, Play, Trash2, Maximize2, Copy, Loader2,
 type Position = { x: number; y: number };
 type CardState = { pos: Position; minimized: boolean };
 
+// The card uses a few fields from the parent's WorkspaceSession type. Any
+// extra fields are tolerated (we just don't read them) — but TypeScript
+// won't widen automatically, so we mirror the optional shape to accept
+// any WorkspaceSession-shaped object.
 interface SessionLike {
   session_id: string;
   image: { friendly_name: string; image_src: string };
   operational_status: string;
   start_date: string;
   expiration_date: string;
+  container_ip?: string;
+  keepalive_date?: string;
+  agent_id?: string;
+  agent_vnc_url?: string;
+  session_type?: string;
+  workspace_type?: string;
+  [key: string]: unknown;
 }
 
 interface Props {
