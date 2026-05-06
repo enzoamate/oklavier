@@ -6,17 +6,18 @@ import { Minus, Maximize2 as Restore, X, Play, Trash2, Maximize2, Copy, Loader2,
 type Position = { x: number; y: number };
 type CardState = { pos: Position; minimized: boolean };
 
-// SessionLike mirrors the parent's WorkspaceSession shape. We only read a
-// small subset; extras are declared optional so any WorkspaceSession-shaped
-// object can be passed without tsc complaining about missing properties.
+// SessionLike must match the parent's WorkspaceSession shape exactly,
+// because handleConnect/handleDestroy are typed against WorkspaceSession
+// and parameter types are contravariant: a callback accepting a wider
+// shape can't be called with a narrower one.
 interface SessionLike {
   session_id: string;
-  image: { friendly_name: string; image_src: string };
+  image: { image_id: string; friendly_name: string; image_src: string };
   operational_status: string;
   start_date: string;
   expiration_date: string;
-  container_ip?: string;
-  keepalive_date?: string;
+  container_ip: string;
+  keepalive_date: string;
   agent_id?: string;
   agent_vnc_url?: string;
   session_type?: string;
