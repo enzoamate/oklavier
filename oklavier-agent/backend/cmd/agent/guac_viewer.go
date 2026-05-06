@@ -139,14 +139,24 @@ body.sb-open #sidebar { transform: translateX(0); }
 #periph-modal { display: none; position: fixed; inset: 0; z-index: 200; }
 #periph-modal.show { display: flex; align-items: center; justify-content: center; }
 #periph-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(4px); }
-#periph-box { position: relative; width: 480px; max-height: 80vh; background: rgba(15,18,37,0.95); backdrop-filter: blur(40px); border: 1px solid rgba(255,255,255,0.1); border-radius: 16px; padding: 24px; overflow-y: auto; }
-#periph-box h3 { font-size: 16px; font-weight: 700; color: rgba(255,255,255,0.9); margin-bottom: 16px; }
-#periph-close { position: absolute; top: 16px; right: 16px; background: none; border: none; color: rgba(255,255,255,0.3); font-size: 20px; cursor: pointer; }
+/* Outer box does NOT scroll. Header is sticky-ish (just stays at top), the
+   inner list scrolls so the scrollbar lives inside the rounded border, not
+   along the outer edge. */
+#periph-box { position: relative; width: 480px; max-height: 80vh; background: rgba(15,18,37,0.95); backdrop-filter: blur(40px); border: 1px solid rgba(255,255,255,0.1); border-radius: 16px; padding: 24px 24px 20px; overflow: hidden; display: flex; flex-direction: column; }
+#periph-box h3 { font-size: 16px; font-weight: 700; color: rgba(255,255,255,0.9); margin-bottom: 16px; flex-shrink: 0; }
+#periph-close { position: absolute; top: 16px; right: 16px; background: none; border: none; color: rgba(255,255,255,0.3); font-size: 20px; cursor: pointer; z-index: 1; }
 #periph-close:hover { color: rgba(255,255,255,0.7); }
-#periph-reload { position: absolute; top: 18px; right: 50px; background: none; border: none; color: rgba(255,255,255,0.3); cursor: pointer; padding: 2px; line-height: 0; }
+#periph-reload { position: absolute; top: 18px; right: 50px; background: none; border: none; color: rgba(255,255,255,0.3); cursor: pointer; padding: 2px; line-height: 0; z-index: 1; }
 #periph-reload:hover { color: rgba(255,255,255,0.7); }
 #periph-reload svg { width: 16px; height: 16px; }
-#periph-list { display: flex; flex-direction: column; gap: 6px; }
+#periph-list { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; flex: 1; padding-right: 6px; margin-right: -6px; }
+/* Custom thin scrollbar — Chromium */
+#periph-list::-webkit-scrollbar { width: 6px; }
+#periph-list::-webkit-scrollbar-track { background: transparent; }
+#periph-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 6px; transition: background 0.2s; }
+#periph-list::-webkit-scrollbar-thumb:hover { background: rgba(112,150,255,0.45); }
+/* Firefox */
+#periph-list { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.12) transparent; }
 .periph-item { display: flex; justify-content: space-between; align-items: center; gap: 12px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; padding: 10px 14px; }
 .periph-label { font-size: 13px; color: rgba(255,255,255,0.8); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
 .periph-toggle { position: relative; display: inline-block; width: 36px; height: 20px; flex-shrink: 0; }
