@@ -145,7 +145,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download chart tarballs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: /tmp/charts
           pattern: chart-*
