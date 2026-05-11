@@ -127,7 +127,7 @@ jobs:
           helm push ${{ steps.pack.outputs.tgz }} oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts
 
       - name: Upload chart tarball as artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: chart-${{ matrix.name }}
           path: ${{ steps.pack.outputs.tgz }}
