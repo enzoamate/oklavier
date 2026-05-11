@@ -1,4 +1,4 @@
-FROM node:22-alpine AS builder
+FROM node:26-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
@@ -6,7 +6,7 @@ COPY . .
 ENV NEXT_PUBLIC_OKLAVIER_API=http://oklavier-api.oklavier.svc.cluster.local:8080
 RUN npm run build
 
-FROM node:22-alpine
+FROM node:26-alpine
 WORKDIR /app
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
